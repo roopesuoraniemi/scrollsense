@@ -27,7 +27,8 @@ class MockAnalyser(ContentAnalyser):
             title=f"[MOCK] Placeholder clip {video}",
             transcript="[MOCK] No video was analysed. Set GEMINI_API_KEY for real output.",
             on_screen_text=placeholder, visual_description=placeholder,
-            audio_description=placeholder, format="other", people_present=False, language="en",
+            audio_description=placeholder, emotional_cues=placeholder, intended_meaning=placeholder,
+            format="other", people_present=False, language="en",
             main_message="[MOCK] Placeholder text package used to test the interface.")
 
     def score(self, package: TextPackage) -> ClipScores:
@@ -35,10 +36,11 @@ class MockAnalyser(ContentAnalyser):
         seed = package.title
         themes = {c.key: self.__digit(seed, c.key) % 4 for c in CRITERIA if c != SAFETY_CRITERION}
         return ClipScores(
-            valence=1 + self.__digit(seed, "v") % 5, arousal=1 + self.__digit(seed, "a") % 5,
+            rationale="[MOCK] random scores, not an analysis", evidence="[MOCK] no evidence",
+            negative_affect=self.__digit(seed, "n") % 4, positive_affect=self.__digit(seed, "p") % 4,
+            arousal=1 + self.__digit(seed, "a") % 5,
             stance=STANCES[self.__digit(seed, "s") % len(STANCES)],  # type: ignore[arg-type]
-            hopeful=bool(self.__digit(seed, "h") % 2), a9_death_suicide=0,
-            evidence="[MOCK] random scores, not an analysis", **themes)
+            hopeful=bool(self.__digit(seed, "h") % 2), a9_death_suicide=0, **themes)
 
     def embed(self, package: TextPackage) -> tuple[float, ...]:
         return tuple(((self.__digit(package.title, f"e{i}") % 2000) - 1000) / 1000 for i in range(32))

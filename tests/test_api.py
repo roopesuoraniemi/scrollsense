@@ -41,7 +41,9 @@ def test_analyse_then_read_back(client: TestClient) -> None:
     assert wait_for(client, accepted["job"]) == {"id": "dQw4w9WgXcQ", "stage": "done", "error": None}
     detail = client.get("/api/clips/dQw4w9WgXcQ").json()
     assert detail["package"]["title"].startswith("[MOCK]") and 0 <= detail["load"] <= 27
-    assert [c["id"] for c in client.get("/api/clips").json()] == ["dQw4w9WgXcQ"]
+    assert 1 <= detail["valence"] <= 5 and "intended_meaning" in detail["package"]
+    summaries = client.get("/api/clips").json()
+    assert [c["id"] for c in summaries] == ["dQw4w9WgXcQ"] and summaries[0]["valence"] == detail["valence"]
 
 
 def test_bad_url_is_400(client: TestClient) -> None:

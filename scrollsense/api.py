@@ -46,13 +46,14 @@ class ClipSummary(Frozen):
 
 
 class ClipDetail(Frozen):
-    """A full analysis for display; the embedding vector is left out."""
+    """A full analysis for display, with the derived valence; the embedding vector is left out."""
 
     id: str
     url: str
     analyser: AnalyserLabel
     package: TextPackage
     scores: ClipScores
+    valence: int
     load: int
     embed_error: str | None
 
@@ -60,7 +61,8 @@ class ClipDetail(Frozen):
     def of(cls, analysis: ClipAnalysis) -> "ClipDetail":
         return cls(id=analysis.video_id, url=analysis.video.watch_url, analyser=analysis.analyser,
                    package=analysis.package, scores=analysis.scores,
-                   load=analysis.scores.theme_load, embed_error=analysis.embedding.error)
+                   valence=analysis.scores.valence, load=analysis.scores.theme_load,
+                   embed_error=analysis.embedding.error)
 
 
 class Api:

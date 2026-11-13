@@ -27,14 +27,35 @@ def test_watch_url() -> None:
 
 
 def scores(**overrides: int) -> ClipScores:
-    base = {c.key: 1 for c in CRITERIA} | {"valence": 3, "arousal": 3}
-    return ClipScores(stance="unrelated", hopeful=False, evidence="e", **(base | overrides))
+    base = {c.key: 1 for c in CRITERIA} | {"negative_affect": 0, "positive_affect": 0, "arousal": 3}
+    return ClipScores(rationale="r", stance="unrelated", hopeful=False, evidence="e",
+                      **(base | overrides))
 
 
 def test_clamped_forces_ranges() -> None:
-    clamped = scores(a1_depressed_mood=7, a2_anhedonia=-2, valence=9, arousal=0).clamped()
+    clamped = scores(a1_depressed_mood=7, a2_anhedonia=-2, arousal=0,
+                     negative_affect=5, positive_affect=-1).clamped()
     assert (clamped.a1_depressed_mood, clamped.a2_anhedonia) == (3, 0)
-    assert (clamped.valence, clamped.arousal) == (5, 1)
+    assert (clamped.negative_affect, clamped.positive_affect, clamped.arousal) == (3, 0, 1)
+    assert scores(arousal=9).clamped().arousal == 5
+
+
+@pytest.mark.parametrize(("negative", "positive", "valence"), [
+    (3, 0, 1), (2, 0, 2), (1, 0, 2), (3, 1, 2), (2, 1, 2),
+    (0, 0, 3), (2, 2, 3), (3, 3, 3),
+    (0, 1, 4), (1, 3, 4), (0, 3, 5),
+])
+def test_valence_is_derived_from_affect(negative: int, positive: int, valence: int) -> None:
+    assert scores(negative_affect=negative, positive_affect=positive).valence == valence
+
+
+def test_valence_stays_in_range_before_clamping() -> None:
+    assert scores(negative_affect=9).valence == 1 and scores(positive_affect=9).valence == 5
+
+
+def test_rationale_is_generated_before_any_score() -> None:
+    fields = list(ClipScores.model_json_schema()["properties"])
+    assert fields[0] == "rationale" and fields.index("evidence") < fields.index("negative_affect")
 
 
 def test_theme_load_sums_nine_criteria() -> None:

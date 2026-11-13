@@ -5,7 +5,7 @@ Paste a public YouTube Shorts URL. The app shows four things:
 1. **The original video** (YouTube embed).
 2. **The generated text package**: Gemini watches the video and describes what is said, written, shown and heard. *It is told not to judge the people in it.*
 3. **The clip's point in embedded space**, with two views:
-   - *Affect space*: valence × arousal from the stage-2 scores.
+   - *Affect space*: valence × arousal from the stage-2 scores. Valence is derived in code from the model's negative and positive affect scores (0–3 each, as felt by a typical viewer).
    - *Semantic space*: a 2-D PCA of Gemini text embeddings of the package, across all analysed clips.
 4. **DSM-5 theme scores**: A1–A9, each 0–3, plus a theme load out of 27, the clip's stance, and a quoted piece of evidence. Any A9 (death/suicide) score shows the safety-path banner.
 
@@ -14,7 +14,7 @@ These scores describe the **content's themes**, not any person. They are not a d
 ```
 YouTube URL ──► Gemini stage 1 (video in, JSON out) ──► text package
                                                          │
-                     Gemini stage 2 (text in, JSON out) ◄┘──► DSM-5 themes, valence, arousal, stance
+                     Gemini stage 2 (text in, JSON out) ◄┘──► DSM-5 themes, affect, arousal, stance
                      Gemini embedding of the package    ──► semantic map
 ```
 
@@ -42,6 +42,8 @@ SCROLLSENSE_MOCK=1 uv run uvicorn scrollsense.server:app --port 8765
 ```bash
 uv run python -m scrollsense https://www.youtube.com/shorts/<id> https://youtu.be/<id>
 ```
+
+Add `--force` to re-analyse clips that are already stored.
 
 **Useful URLs:**
 - `?view=sem` opens the semantic map.
