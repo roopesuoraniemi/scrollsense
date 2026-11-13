@@ -59,12 +59,14 @@ A pure core inside a shell of swappable parts (see `rules/`).
 | `scrollsense/schemas.py` | Structured-output models (`TextPackage`, `ClipScores`) and the DSM-5 `CRITERIA` |
 | `scrollsense/domain.py` | Pure values: `VideoId`, `ClipAnalysis`, `Stage`, `semantic_points()` (PCA) |
 | `scrollsense/prompts.py` | Prompt text for both stages |
-| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore` |
+| `scrollsense/views.py`, `feed.py` | Pure core for the phone prototype: `ViewerId`, `ViewEvent`, `dedupe`; `composition()`, `readout()` |
+| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog` |
 | `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations |
-| `scrollsense/store.py` | `JsonFileStore` |
+| `scrollsense/store.py`, `viewlog.py` | `JsonFileStore`, `JsonlViewLog` |
+| `scrollsense/analysis_queue.py`, `intake.py` | `AnalysisQueue` (paced workers, dedupe by video), `ViewIntake` (record a batch) |
 | `scrollsense/service.py` | `AnalysisService`: describe, then score, then embed, then store |
 | `scrollsense/jobs.py` | `JobBoard`: runs background threads and tracks their status |
-| `scrollsense/api.py` | HTTP endpoints under `/api` |
+| `scrollsense/api.py`, `views_api.py`, `auth.py` | HTTP endpoints under `/api`; Bearer-token guard |
 | `scrollsense/composition.py` | `Settings` from the environment, plus the wiring |
 | `scrollsense/server.py`, `__main__.py` | Entry points: web server and CLI |
 | `web/index.html`, `web/app.js` | The UI, with no build step |
@@ -72,6 +74,46 @@ A pure core inside a shell of swappable parts (see `rules/`).
 To add another model provider (e.g. Claude for scoring), implement `ContentAnalyser` and select it in `composition.py`.
 
 Tests: `uv run pytest`
+
+## Phone prototype backend
+
+A userscript on the phone (see `docs/phone-prototype-plan.md`) posts view events; each viewed Short is analysed once (shared across viewers) and feeds that viewer's composition readout.
+
+**Environment** (`.env` or the shell):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SCROLLSENSE_TOKEN` | unset | Bearer token required on every `/api/*` route. Unset = open, with a startup warning. |
+| `SCROLLSENSE_WORKERS` | `2` | Analysis worker threads |
+| `SCROLLSENSE_RPM` | `20` | Max analyses started per minute (`0` = unpaced) |
+| `SCROLLSENSE_DATA` | `data` | Data folder: `clips/` + `views/<viewer>.jsonl` (mock mode: `mock_clips/` + `mock_views/`) |
+
+**Endpoints** (all need `Authorization: Bearer <token>` when a token is set):
+
+| Method + path | Returns |
+|---|---|
+| `POST /api/views` `{viewer, events:[{event_id, video_id or url, seen_at, tz_offset_min?, dwell_s?, duration_s?, loops?, source?, surface?}]}` | 202 `{accepted, duplicates, queued, rejected:[{event_id, reason}]}`; only `surface: "shorts"` is analysed |
+| `GET /api/viewers` | `[{viewer, events, last_seen}]` |
+| `GET /api/viewers/{viewer}/feed?limit=50` | newest events first, each with `state` (scored / queued / failed / pending) and `clip` when scored |
+| `GET /api/viewers/{viewer}/readout?from=&to=&baseline_from=&baseline_to=&control=` | `{windows, current, baseline, control, readout}`; epoch seconds; default: last 24 h vs everything before |
+| `DELETE /api/viewers/{viewer}` | 204; erases that viewer's view log (GDPR) |
+| `GET /api/queue` | `{depth, in_flight, done, failed, recent_failures}` |
+
+Viewer ids are pseudonyms matching `[a-z0-9-]{3,32}`. The web UI takes the token once from `http://localhost:8765/?token=<token>` and remembers it.
+
+```bash
+TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')
+echo "SCROLLSENSE_TOKEN=$TOKEN" >> .env
+uv run uvicorn scrollsense.server:app --port 8765
+
+curl -s -X POST http://127.0.0.1:8765/api/views \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"viewer":"patient-01","events":[
+        {"event_id":"e1","url":"https://m.youtube.com/shorts/dQw4w9WgXcQ","seen_at":1763100000,"tz_offset_min":60,"dwell_s":7.5},
+        {"event_id":"e2","video_id":"jNQXAC9IVRw","seen_at":1763100012,"tz_offset_min":60,"dwell_s":3.1}]}'
+```
+
+> **Set `SCROLLSENSE_TOKEN` before running `cloudflared tunnel --url http://127.0.0.1:8765`.** The tunnel makes the server public, and every queued Short spends Gemini credits.
 
 ## Notes and limits
 

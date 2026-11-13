@@ -21,8 +21,29 @@ function esc(text) {
   return String(text ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-async function api(path, options) {
-  const response = await fetch(path, options);
+// The API may require a Bearer token (SCROLLSENSE_TOKEN). Open the page once with ?token=…;
+// it is kept in localStorage and removed from the address bar.
+const TOKEN = initialToken();
+
+function initialToken() {
+  const params = new URLSearchParams(location.search);
+  const fromUrl = params.get('token');
+  if (fromUrl !== null) {
+    params.delete('token');
+    const query = params.toString();
+    history.replaceState(null, '', location.pathname + (query ? `?${query}` : '') + location.hash);
+  }
+  try {
+    if (fromUrl) localStorage.setItem('scrollsense.token', fromUrl);
+    return fromUrl || localStorage.getItem('scrollsense.token') || '';
+  } catch {
+    return fromUrl || '';
+  }
+}
+
+async function api(path, options = {}) {
+  const headers = { ...(options.headers || {}), ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) };
+  const response = await fetch(path, { ...options, headers });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
   return response.json();
 }

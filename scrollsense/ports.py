@@ -1,9 +1,10 @@
 """Seams between the pipeline and the outside world."""
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Sequence
 
 from .domain import AnalyserLabel, ClipAnalysis, Stage, VideoId
 from .schemas import ClipScores, TextPackage
+from .views import ViewerId, ViewEvent, Window
 
 Progress = Callable[[Stage], None]
 
@@ -46,3 +47,23 @@ class AnalysisStore(ABC):
     @abstractmethod
     def save(self, analysis: ClipAnalysis) -> None:
         """Store `analysis`, replacing any earlier one for the same video."""
+
+
+class ViewLog(ABC):
+    """Append-only record of view events, per viewer. Deduplication is the caller's job."""
+
+    @abstractmethod
+    def append(self, events: Sequence[ViewEvent]) -> None:
+        """Record `events` after any already logged, for whichever viewers they name."""
+
+    @abstractmethod
+    def between(self, viewer: ViewerId, window: Window) -> tuple[ViewEvent, ...]:
+        """`viewer`'s events with `seen_at` in `window`, in the order they were appended."""
+
+    @abstractmethod
+    def viewers(self) -> tuple[ViewerId, ...]:
+        """Every viewer with at least one logged event, sorted."""
+
+    @abstractmethod
+    def erase(self, viewer: ViewerId) -> None:
+        """Delete everything logged for `viewer` (GDPR erasure). Unknown viewers are a no-op."""

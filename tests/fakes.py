@@ -30,3 +30,12 @@ def instant_mock() -> MockAnalyser:
 
 def label() -> AnalyserLabel:
     return instant_mock().label
+
+
+class FailingDescribeAnalyser(MockAnalyser):
+    def describe(self, video: VideoId) -> TextPackage:
+        raise PermissionError(f"video {video} is private")
+
+
+def no_wait(seconds: float) -> None:
+    """A Pacer sleep that returns at once."""
