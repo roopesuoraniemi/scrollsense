@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScrollSense POC</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1f1e1c;--mut:#6b6a66;--line:#e3e1db;--acc:#534AB7;--acc-bg:#EEEDFE;
+--warm:#D85A30;--cool:#378ADD;--ok:#1D9E75;--danger:#A32D2D;--danger-bg:#FCEBEB;--seg:#ecebe6}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#21201e;--ink:#ecebe6;--mut:#a3a19a;--line:#35342f;
+--acc:#AFA9EC;--acc-bg:#2c2858;--danger:#F09595;--danger-bg:#3a1a1a;--seg:#33322d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:18px;font-weight:600;margin:0}
+.badge{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--acc-bg);color:var(--acc)}
+.badge.mock{background:#FAEEDA;color:#854F0B}
+form{display:flex;gap:8px;padding:14px 20px;flex-wrap:wrap;align-items:center}
+input[type=text]{flex:1;min-width:240px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
+button{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+@media (prefers-color-scheme:dark){button.primary{color:#1b1840}}
+button.on{border-color:var(--acc);color:var(--acc)}
+#status{font-size:13px;color:var(--mut)}
+#status.err{color:var(--danger)}
+#list{display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 8px}
+#list button{font-size:12px;padding:4px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+main{display:grid;grid-template-columns:minmax(260px,330px) minmax(0,1fr) minmax(0,1fr);gap:16px;padding:8px 20px 28px}
+@media (max-width:1100px){main{grid-template-columns:minmax(260px,330px) minmax(0,1fr)}#col3{grid-column:1/-1}}
+@media (max-width:700px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+.card h2{font-size:14px;font-weight:600;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.card h2 .step{font-size:11px;font-weight:500;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 6px}
+.video{position:relative;width:100%;max-width:330px;margin:0 auto;aspect-ratio:9/16;border-radius:10px;overflow:hidden;background:#000}
+.video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.empty{color:var(--mut);font-size:14px;padding:24px 0;text-align:center}
+dl{margin:0}dt{font-size:12px;color:var(--mut);margin-top:10px}dd{margin:2px 0 0;white-space:pre-wrap}
+dd.scroll{max-height:160px;overflow:auto;border-left:2px solid var(--line);padding-left:10px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.chip{font-size:12px;padding:2px 8px;border-radius:6px;border:1px solid var(--line)}
+.toggle{display:flex;gap:6px;margin-bottom:8px}.toggle button{font-size:12px;padding:4px 10px}
+svg text{font:11px system-ui,sans-serif;fill:var(--mut)}
+.note{font-size:12px;color:var(--mut);margin:6px 0 0}
+.row{display:grid;grid-template-columns:34px minmax(0,1fr) 120px 22px;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}.row .code{font-size:12px;color:var(--mut)}
+.bar{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}.bar i{height:10px;border-radius:3px;background:var(--seg)}
+.bar i.f{background:var(--acc)}.row.a9 .bar i.f{background:var(--danger)}
+.total{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}.total b{font-size:28px;font-weight:600}
+.safety{background:var(--danger-bg);color:var(--danger);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:10px}
+blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);background:var(--bg);border-radius:0 8px 8px 0;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ScrollSense</h1><span class="badge" id="mode">…</span>
+  <span style="font-size:13px;color:var(--mut)">Proof of concept: video → text package → embedded space → DSM-5 themes. Not a diagnostic tool.</span>
+</header>
+<form id="f">
+  <input type="text" id="url" placeholder="https://www.youtube.com/shorts/…" autocomplete="off" aria-label="YouTube or Shorts URL">
+  <button class="primary" type="submit">Analyse</button>
+  <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="force"> Re-run (ignore cache)</label>
+  <span id="status" role="status"></span>
+</form>
+<div id="list" aria-label="Analysed clips"></div>
+<main>
+  <section>
+    <div class="card"><h2><span class="step">1</span>Original video</h2><div id="video"><div class="empty">Paste a public YouTube Shorts URL to start.</div></div></div>
+  </section>
+  <section>
+    <div class="card"><h2><span class="step">2</span>Generated text package</h2><div id="pkg"><div class="empty">No clip selected.</div></div></div>
+  </section>
+  <section id="col3">
+    <div class="card"><h2><span class="step">3</span>Point in embedded space</h2>
+      <div class="toggle"><button id="tAff" class="on" type="button">Affect space</button><button id="tSem" type="button">Semantic space</button></div>
+      <svg id="map" viewBox="0 0 360 330" width="100%" role="img" aria-label="Map of analysed clips"></svg>
+      <p class="note" id="mapnote"></p>
+    </div>
+    <div class="card"><h2><span class="step">4</span>DSM-5 theme scores</h2><div id="dsm"><div class="empty">No clip selected.</div></div></div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let META=null,CLIPS=[],CUR=null,VIEW=new URLSearchParams(location.search).get('view')==='sem'?'sem':'aff';
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const STANCE={dwelling_or_romanticising:'Dwelling / romanticising',neutral_or_informational:'Neutral / informational',coping_or_recovery:'Coping / recovery',unrelated:'Unrelated'};
+const STAGE={queued:'Queued…',stage1:'Gemini stage 1: watching the video…',stage2:'Gemini stage 2: scoring DSM-5 themes…',embedding:'Embedding the text package…',cached:'Loaded from cache',done:'Done'};
+
+async function api(p,o){const r=await fetch(p,o);if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.statusText);return r.json()}
+
+async function init(){
+  META=await api('/api/meta');
+  $('mode').textContent=META.mock?'MOCK mode, no API calls':'Gemini: '+META.model;
+  $('mode').classList.toggle('mock',META.mock);
+  await refresh();
+  const h=location.hash.slice(1);
+  if(h)select(h);else if(CLIPS.length)select(CLIPS[CLIPS.length-1].id);
+}
+async function refresh(){CLIPS=await api('/api/clips');renderList();renderMap()}
+function renderList(){
+  $('list').innerHTML=CLIPS.map(c=>`<button type="button" data-id="${c.id}" class="${CUR&&CUR.id===c.id?'on':''}" title="${esc(c.title)}">${esc(c.title)}</button>`).join('');
+  [...$('list').children].forEach(b=>b.onclick=()=>select(b.dataset.id));
+}
+async function select(id){
+  try{CUR=await api('/api/clips/'+id)}catch(e){return}
+  location.hash=id;renderList();renderVideo();renderPkg();renderMap();renderDsm();
+}
+function renderVideo(){
+  $('video').innerHTML=`<div class="video"><iframe src="https://www.youtube.com/embed/${CUR.id}?rel=0&playsinline=1" title="Original video" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
+  <p class="note"><a href="${esc(CUR.url)}" target="_blank" rel="noopener">${esc(CUR.url)}</a></p>`;
+}
+function renderPkg(){
+  const p=CUR.package;
+  const f=(k,l,cls='')=>`<dt>${l}</dt><dd class="${cls}">${esc(p[k])||'<span style="color:var(--mut)">(none)</span>'}</dd>`;
+  $('pkg').innerHTML=`${CUR.mock?'<div class="safety" style="background:#FAEEDA;color:#854F0B">Mock output: placeholder text, no video was analysed.</div>':''}
+  <div style="font-weight:600;font-size:16px">${esc(p.title)}</div>
+  <div class="chips"><span class="chip">${esc(p.format)}</span><span class="chip">${p.people_present?'people present':'no people'}</span><span class="chip">lang: ${esc(p.language)}</span></div>
+  <dl>${f('main_message','Main message')}${f('transcript','Transcript','scroll')}${f('on_screen_text','On-screen text','scroll')}${f('visual_description','Visuals')}${f('audio_description','Audio')}</dl>
+  <p class="note">Generated by ${esc(CUR.model)}. This text is what stage 2 scores.</p>`;
+}
+function hash(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))|0;return h}
+const sw=c=>`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};vertical-align:-1px"></span>`;
+const LEGEND=`Colour = DSM-5 theme load: ${sw('var(--cool)')} low → ${sw('var(--warm)')} high · ${sw('var(--danger)')} A9 safety theme`;
+function renderMap(){
+  const W=360,H=330,L=40,R=12,T=14,B=36,pw=W-L-R,ph=H-T-B;
+  let s='';
+  if(VIEW==='aff'){
+    const X=v=>L+(v-0.5)/5*pw,Y=a=>T+ph-(a-0.5)/5*ph;
+    s+=`<rect x="${L}" y="${T}" width="${pw}" height="${ph}" fill="none" stroke="var(--line)"/>`;
+    s+=`<line x1="${X(3)}" y1="${T}" x2="${X(3)}" y2="${T+ph}" stroke="var(--line)" stroke-dasharray="3 3"/><line x1="${L}" y1="${Y(3)}" x2="${L+pw}" y2="${Y(3)}" stroke="var(--line)" stroke-dasharray="3 3"/>`;
+    for(let i=1;i<=5;i++)s+=`<text x="${X(i)}" y="${T+ph+14}" text-anchor="middle">${i}</text><text x="${L-8}" y="${Y(i)+4}" text-anchor="end">${i}</text>`;
+    s+=`<text x="${L+pw/2}" y="${H-4}" text-anchor="middle">Valence: negative → positive</text>`;
+    s+=`<text x="${L+6}" y="${T+14}">energetic, negative</text><text x="${L+pw-6}" y="${T+14}" text-anchor="end">energetic, positive</text><text x="${L+6}" y="${T+ph-8}">calm, negative</text><text x="${L+pw-6}" y="${T+ph-8}" text-anchor="end">calm, positive</text>`;
+    s+=`<text x="12" y="${T+ph/2}" transform="rotate(-90 12 ${T+ph/2})" text-anchor="middle">Arousal</text>`;
+    const cl=(v,a,b)=>Math.min(b,Math.max(a,v));
+    const pts=CLIPS.map(c=>{const h=Math.abs(hash(c.id));return {c,x:cl(X(c.valence)+((h%13)-6)*2.2,L+10,L+pw-10),y:cl(Y(c.arousal)+(((h>>4)%13)-6)*2.2,T+10,T+ph-10)}});
+    s+=dots(pts);
+    $('mapnote').innerHTML='Axes come from stage-2 scores (valence and arousal, 1–5). Small offsets keep clips with equal scores apart.<br>'+LEGEND;
+  }else{
+    const pts=CLIPS.filter(c=>c.semantic).map(c=>({c,x:L+pw/2+c.semantic[0]*pw*0.43,y:T+ph/2-c.semantic[1]*ph*0.43}));
+    s+=`<rect x="${L}" y="${T}" width="${pw}" height="${ph}" fill="none" stroke="var(--line)"/>`;
+    s+=`<text x="${L+pw/2}" y="${H-4}" text-anchor="middle">Principal component 1</text><text x="12" y="${T+ph/2}" transform="rotate(-90 12 ${T+ph/2})" text-anchor="middle">Principal component 2</text>`;
+    if(pts.length<2)s+=`<text x="${L+pw/2}" y="${T+ph/2}" text-anchor="middle">Analyse at least 2 clips to see the semantic map</text>`;
+    s+=dots(pts);
+    $('mapnote').innerHTML=`2-D PCA of text-package embeddings (${esc(META?META.embed_model:'')}). Nearby points have similar content. Axes are relative and shift as clips are added.<br>`+LEGEND;
+  }
+  $('map').innerHTML=s;
+  $('map').querySelectorAll('[data-id]').forEach(g=>g.onclick=()=>select(g.dataset.id));
+}
+function dots(pts){
+  const col=c=>c.a9>0?'var(--danger)':`color-mix(in srgb, var(--warm) ${Math.round(Math.min(c.load,18)/18*100)}%, var(--cool))`;
+  return pts.sort((a,b)=>(CUR&&a.c.id===CUR.id)-(CUR&&b.c.id===CUR.id)).map(({c,x,y})=>{const cur=CUR&&c.id===CUR.id;
+    return `<g data-id="${c.id}" style="cursor:pointer"><title>${esc(c.title)} · theme load ${c.load}/27</title>
+    ${cur?`<circle cx="${x}" cy="${y}" r="13" fill="none" stroke="var(--acc)" stroke-width="2"/>`:''}
+    <circle cx="${x}" cy="${y}" r="${cur?8:5.5}" fill="${col(c)}" stroke="var(--card)" stroke-width="1.5" opacity="${cur?1:.75}"/></g>`}).join('');
+}
+function renderDsm(){
+  const s=CUR.scores,load=CUR.load;
+  const rows=META.criteria.map(c=>{const v=s[c.key];return `<div class="row ${c.code==='A9'?'a9':''}" title="${esc(c.theme)}"><span class="code">${c.code}</span><span>${esc(c.label)}</span><span class="bar">${[1,2,3].map(i=>`<i class="${v>=i?'f':''}"></i>`).join('')}</span><span>${v}</span></div>`}).join('');
+  $('dsm').innerHTML=`${s.a9_death_suicide>0?`<div class="safety"><b>Safety path:</b> this clip contains death or suicide themes (A9 = ${s.a9_death_suicide}). In the product it is never shown as a trend: engagement with it triggers the clinician protocol and shows crisis resources.</div>`:''}
+  <div class="total"><b>${load}</b><span style="color:var(--mut)">/ 27 theme load (sum of A1–A9)</span></div>
+  <div class="chips" style="margin-bottom:10px"><span class="chip">Stance: ${esc(STANCE[s.stance]||s.stance)}</span><span class="chip">Valence ${s.valence}/5</span><span class="chip">Arousal ${s.arousal}/5</span><span class="chip">${s.hopeful?'Hopeful':'Not hopeful'}</span></div>
+  ${rows}
+  <blockquote>${esc(s.evidence)}</blockquote>
+  <p class="note">0 absent · 1 mentioned · 2 central · 3 intense or glorified. These scores describe the <i>content's</i> themes, not any person, and are not a diagnosis.</p>`;
+}
+$('tAff').onclick=()=>{VIEW='aff';$('tAff').classList.add('on');$('tSem').classList.remove('on');renderMap()};
+$('tSem').onclick=()=>{VIEW='sem';$('tSem').classList.add('on');$('tAff').classList.remove('on');renderMap()};
+$('f').onsubmit=async e=>{
+  e.preventDefault();const url=$('url').value.trim();const st=$('status');st.className='';
+  if(!url){st.className='err';st.textContent='Paste a YouTube URL first.';return}
+  let j;try{j=await api('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,force:$('force').checked})})}
+  catch(err){st.className='err';st.textContent=err.message;return}
+  st.textContent=STAGE.queued;
+  const poll=async()=>{const r=await api('/api/jobs/'+j.job);
+    if(r.stage==='error'){st.className='err';st.textContent=r.error;return}
+    st.textContent=STAGE[r.stage]||r.stage;
+    if(r.stage==='done'){await refresh();await select(r.id);$('url').value='';return}
+    setTimeout(poll,800)};
+  poll();
+};
+$('url').oninput=()=>{$('status').className='';};
+$('tSem').classList.toggle('on',VIEW==='sem');$('tAff').classList.toggle('on',VIEW==='aff');
+init().catch(e=>{$('status').className='err';$('status').textContent='Server not reachable: '+e.message});
+</script>
+</body>
+</html>
