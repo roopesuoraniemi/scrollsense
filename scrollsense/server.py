@@ -7,7 +7,8 @@ import uuid
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -47,6 +48,7 @@ def semantic_coords(records: list[dict]) -> dict[str, list[float]]:
 def summary(r: dict, sem: dict) -> dict:
     s = r["scores"]
     return {"id": r["id"], "title": r["package"]["title"], "mock": r.get("mock", False),
+            "source": r.get("source", "youtube"),
             "valence": s["valence"], "arousal": s["arousal"], "stance": s["stance"],
             "load": theme_load(s), "a9": s["a9_death_suicide"], "semantic": sem.get(r["id"])}
 
@@ -105,6 +107,52 @@ def job(jid: str):
     if jid not in JOBS:
         raise HTTPException(404, "Unknown job")
     return JOBS[jid]
+
+
+MAX_CLIP_BYTES = 100 * 1024 * 1024  # Gemini inline video limit
+
+
+def _run_clip(jid: str, cid: str, video_bytes: bytes, mime_type: str,
+              label: str, source: str, fps: int):
+    def stage(s):
+        with _lock:
+            JOBS[jid]["stage"] = s
+    try:
+        rec = pipeline.analyze_bytes(video_bytes, mime_type, label=label,
+                                     source=source, fps=fps, cid=cid, on_stage=stage)
+        with _lock:
+            JOBS[jid].update(stage="done", id=rec["id"])
+    except Exception as e:
+        with _lock:
+            JOBS[jid].update(stage="error", error=f"{type(e).__name__}: {e}")
+
+
+@app.post("/api/analyze-clip")
+async def analyze_clip(request: Request, label: str = "", source: str = "screen_capture", fps: int = 3):
+    video_bytes = await request.body()
+    if not video_bytes:
+        raise HTTPException(400, "Empty video clip")
+    if len(video_bytes) > MAX_CLIP_BYTES:
+        raise HTTPException(413, "Clip exceeds 100 MB inline limit")
+    mime_type = request.headers.get("content-type", "video/webm")
+    cid = pipeline.new_clip_id(video_bytes)
+    jid = uuid.uuid4().hex[:8]
+    JOBS[jid] = {"stage": "queued", "id": cid}
+    threading.Thread(
+        target=_run_clip,
+        args=(jid, cid, video_bytes, mime_type, label, source, max(1, min(fps, 10))),
+        daemon=True,
+    ).start()
+    return {"job": jid, "id": cid}
+
+
+@app.get("/api/recordings/{filename}")
+def recording(filename: str):
+    safe_name = Path(filename).name
+    path = pipeline.RECORDINGS / safe_name
+    if not path.is_file():
+        raise HTTPException(404, "Recording not found")
+    return FileResponse(path)
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).resolve().parent.parent / "web", html=True),

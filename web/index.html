@@ -32,7 +32,12 @@ main{display:grid;grid-template-columns:minmax(260px,330px) minmax(0,1fr) minmax
 .card h2{font-size:14px;font-weight:600;margin:0 0 10px;display:flex;align-items:center;gap:8px}
 .card h2 .step{font-size:11px;font-weight:500;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 6px}
 .video{position:relative;width:100%;max-width:330px;margin:0 auto;aspect-ratio:9/16;border-radius:10px;overflow:hidden;background:#000}
-.video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.video iframe,.video video{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:contain}
+.capture-bar{display:flex;gap:8px;padding:0 20px 12px;flex-wrap:wrap;align-items:center}
+.capture-bar select,.file-btn{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
+.rec-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--danger);margin-right:6px;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+#preview{width:72px;height:44px;border-radius:6px;background:#000;object-fit:cover;border:1px solid var(--line);display:none}
 .empty{color:var(--mut);font-size:14px;padding:24px 0;text-align:center}
 dl{margin:0}dt{font-size:12px;color:var(--mut);margin-top:10px}dd{margin:2px 0 0;white-space:pre-wrap}
 dd.scroll{max-height:160px;overflow:auto;border-left:2px solid var(--line);padding-left:10px}
@@ -61,6 +66,19 @@ blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);bac
   <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="force"> Re-run (ignore cache)</label>
   <span id="status" role="status"></span>
 </form>
+<div class="capture-bar">
+  <button type="button" id="capBtn" class="primary">Start Screen Capture</button>
+  <button type="button" id="flushBtn" disabled>Flush Clip Now (Swipe)</button>
+  <select id="chunkSec" aria-label="Chunk interval">
+    <option value="8" selected>Auto-chunk: 8s</option>
+    <option value="5">Auto-chunk: 5s</option>
+    <option value="12">Auto-chunk: 12s</option>
+    <option value="0">Manual (flush on swipe)</option>
+  </select>
+  <label class="file-btn">Upload clip <input type="file" id="uploadClip" accept="video/*" hidden></label>
+  <video id="preview" muted autoplay playsinline></video>
+  <span id="capStatus" class="note" style="margin:0"></span>
+</div>
 <div id="list" aria-label="Analysed clips"></div>
 <main>
   <section>
@@ -105,6 +123,12 @@ async function select(id){
   location.hash=id;renderList();renderVideo();renderPkg();renderMap();renderDsm();
 }
 function renderVideo(){
+  if(CUR.video_file){
+    const kb=Math.max(1,Math.round((CUR.bytes_len||0)/1024));
+    $('video').innerHTML=`<div class="video"><video controls autoplay loop playsinline src="/api/recordings/${encodeURIComponent(CUR.video_file)}"></video></div>
+    <p class="note">${esc(CUR.source||'screen_capture')} · ${kb} KB · ${esc(CUR.mime_type||'video/webm')}</p>`;
+    return;
+  }
   $('video').innerHTML=`<div class="video"><iframe src="https://www.youtube.com/embed/${CUR.id}?rel=0&playsinline=1" title="Original video" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
   <p class="note"><a href="${esc(CUR.url)}" target="_blank" rel="noopener">${esc(CUR.url)}</a></p>`;
 }
@@ -180,6 +204,80 @@ $('f').onsubmit=async e=>{
 };
 $('url').oninput=()=>{$('status').className='';};
 $('tSem').classList.toggle('on',VIEW==='sem');$('tAff').classList.toggle('on',VIEW==='aff');
+
+// --- Screen Capture (getDisplayMedia -> rolling MediaRecorder chunks -> /api/analyze-clip) ---
+let capStream=null,recorder=null,chunkTimer=null,tickTimer=null,chunkStart=0,clipSeq=0;
+function pickMime(){
+  for(const m of ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'])
+    if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))return m;
+  return '';
+}
+async function uploadClipBytes(blob,label,source){
+  const st=$('status');st.className='';st.textContent='Uploading '+Math.max(1,Math.round(blob.size/1024))+' KB clip…';
+  const q=new URLSearchParams({label,source,fps:'3'});
+  const r=await fetch('/api/analyze-clip?'+q,{method:'POST',headers:{'Content-Type':blob.type||'video/webm'},body:blob});
+  if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.statusText);
+  const j=await r.json();st.textContent=STAGE.queued;
+  const poll=async()=>{const p=await api('/api/jobs/'+j.job);
+    if(p.stage==='error'){st.className='err';st.textContent=p.error;return}
+    st.textContent=STAGE[p.stage]||p.stage;
+    if(p.stage==='done'){await refresh();await select(p.id);return}
+    setTimeout(poll,700)};
+  poll();
+}
+function startSegment(){
+  if(!capStream)return;
+  const mime=pickMime(),parts=[];
+  recorder=mime?new MediaRecorder(capStream,{mimeType:mime,videoBitsPerSecond:450000}):new MediaRecorder(capStream);
+  recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)parts.push(e.data)};
+  recorder.onstop=()=>{
+    const blob=new Blob(parts,{type:recorder.mimeType||'video/webm'});
+    if(blob.size>0){
+      const n=++clipSeq;
+      uploadClipBytes(blob,'Screen clip #'+n,'screen_capture').catch(err=>{$('status').className='err';$('status').textContent=err.message});
+    }
+    if(capStream)startSegment();
+  };
+  recorder.start();
+  chunkStart=Date.now();
+  clearTimeout(chunkTimer);
+  const sec=Number($('chunkSec').value);
+  if(sec>0)chunkTimer=setTimeout(()=>{if(recorder&&recorder.state==='recording')recorder.stop()},sec*1000);
+}
+function stopCapture(){
+  clearTimeout(chunkTimer);clearInterval(tickTimer);
+  const s=capStream;capStream=null;
+  if(recorder&&recorder.state==='recording')recorder.stop();
+  if(s)s.getTracks().forEach(t=>t.stop());
+  $('preview').srcObject=null;$('preview').style.display='none';
+  $('capBtn').textContent='Start Screen Capture';$('flushBtn').disabled=true;$('capStatus').innerHTML='';
+}
+$('capBtn').onclick=async()=>{
+  if(capStream){stopCapture();return}
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia){
+    $('capStatus').textContent='Screen capture requires HTTPS or localhost in a modern browser.';return;
+  }
+  try{
+    capStream=await navigator.mediaDevices.getDisplayMedia({
+      video:{frameRate:{ideal:5,max:10},width:{ideal:854},height:{ideal:480}},
+      audio:true
+    });
+  }catch(err){$('capStatus').textContent='Capture cancelled: '+err.message;return}
+  capStream.getVideoTracks()[0].onended=()=>stopCapture();
+  $('preview').srcObject=capStream;$('preview').style.display='block';
+  $('capBtn').textContent='Stop Capture';$('flushBtn').disabled=false;
+  startSegment();
+  tickTimer=setInterval(()=>{
+    const elapsed=Math.floor((Date.now()-chunkStart)/1000),sec=Number($('chunkSec').value);
+    $('capStatus').innerHTML=`<span class="rec-dot"></span>Recording (${elapsed}s${sec>0?' / '+sec+'s':''})`;
+  },300);
+};
+$('flushBtn').onclick=()=>{if(recorder&&recorder.state==='recording'){clearTimeout(chunkTimer);recorder.stop()}};
+$('uploadClip').onchange=e=>{
+  const f=e.target.files&&e.target.files[0];if(!f)return;
+  uploadClipBytes(f,f.name,'uploaded_clip').catch(err=>{$('status').className='err';$('status').textContent=err.message});
+  e.target.value='';
+};
 init().catch(e=>{$('status').className='err';$('status').textContent='Server not reachable: '+e.message});
 </script>
 </body>

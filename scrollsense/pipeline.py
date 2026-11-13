@@ -25,6 +25,15 @@ MOCK = os.getenv("SCROLLSENSE_MOCK") == "1"
 # Mock output lives in its own folder so it can never be served as a real analysis.
 DATA = ROOT / "data" / ("mock_clips" if MOCK else "clips")
 DATA.mkdir(parents=True, exist_ok=True)
+RECORDINGS = DATA / "recordings"
+RECORDINGS.mkdir(parents=True, exist_ok=True)
+
+_EXT_BY_MIME = {
+    "video/webm": ".webm",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/x-matroska": ".mkv",
+}
 
 _ID = re.compile(r"(?:v=|/shorts/|youtu\.be/|/embed/|/live/)([A-Za-z0-9_-]{11})")
 
@@ -103,6 +112,11 @@ def _json_config(schema):
                                        response_schema=schema, temperature=0.2)
 
 
+def _normalize_mime(mime_type: str) -> str:
+    base = (mime_type or "video/webm").split(";")[0].strip().lower()
+    return base if base.startswith("video/") else "video/webm"
+
+
 def stage1(vid: str) -> TextPackage:
     from google.genai import types
     r = _gemini().models.generate_content(
@@ -111,6 +125,21 @@ def stage1(vid: str) -> TextPackage:
             types.Part(file_data=types.FileData(file_uri=watch_url(vid))),
             types.Part(text=PROMPT_1),
         ]),
+        config=_json_config(TextPackage),
+    )
+    return r.parsed if isinstance(r.parsed, TextPackage) else TextPackage.model_validate_json(r.text)
+
+
+def stage1_bytes(video_bytes: bytes, mime_type: str, fps: int = 3) -> TextPackage:
+    """Run Gemini stage 1 directly on inline screen-capture bytes (up to 100 MB)."""
+    from google.genai import types
+    base_mime = _normalize_mime(mime_type)
+    part = types.Part.from_bytes(data=video_bytes, mime_type=base_mime)
+    if hasattr(types, "VideoMetadata") and fps > 0:
+        part.video_metadata = types.VideoMetadata(fps=fps)
+    r = _gemini().models.generate_content(
+        model=MODEL,
+        contents=[part, PROMPT_1],
         config=_json_config(TextPackage),
     )
     return r.parsed if isinstance(r.parsed, TextPackage) else TextPackage.model_validate_json(r.text)
@@ -149,6 +178,20 @@ def mock_stage1(vid: str) -> TextPackage:
         format="other", people_present=False, language="en")
 
 
+def mock_stage1_bytes(cid: str, label: str, bytes_len: int, mime_type: str) -> TextPackage:
+    time.sleep(0.8)
+    kb = max(1, round(bytes_len / 1024))
+    title = label.strip() or f"[MOCK] Screen clip {cid[-6:]}"
+    return TextPackage(
+        title=title[:60],
+        transcript="[MOCK] Screen-captured audio would be transcribed verbatim here.",
+        on_screen_text="[MOCK] Captured overlay/captions from screen recording.",
+        visual_description=f"[MOCK] Captured {kb} KB ({mime_type}) screen segment.",
+        audio_description="[MOCK] Captured tab/system audio stream.",
+        main_message="[MOCK] Screen-recording pipeline test (set GEMINI_API_KEY for live Gemini analysis).",
+        format="other", people_present=False, language="en")
+
+
 def mock_stage2(vid: str) -> ClipScores:
     time.sleep(0.7)
     d = {k: _rng(vid, k) % 4 for k in CRITERION_KEYS}
@@ -180,28 +223,21 @@ def load_all() -> list[dict]:
     return sorted(out, key=lambda r: r.get("created", 0))
 
 
-def analyze(url_or_id: str, on_stage: Callable[[str], None] = lambda s: None,
-            force: bool = False) -> dict:
-    vid = video_id(url_or_id)
-    if not force and (cached := load(vid)):
-        on_stage("cached")
-        return cached
-
+def _finish_record(cid: str, pkg: TextPackage, extra: dict,
+                   on_stage: Callable[[str], None]) -> dict:
     mock = MOCK
-    on_stage("stage1")  # video -> text package
-    pkg = mock_stage1(vid) if mock else stage1(vid)
     on_stage("stage2")  # text package -> scores
-    scores = mock_stage2(vid) if mock else stage2(pkg)
+    scores = mock_stage2(cid) if mock else stage2(pkg)
     on_stage("embedding")
     try:
-        vec = mock_embed(vid) if mock else embed(pkg)
+        vec = mock_embed(cid) if mock else embed(pkg)
         embed_error = None
     except Exception as e:  # embedding is optional for the POC
         vec, embed_error = None, str(e)
 
     rec = {
-        "id": vid,
-        "url": watch_url(vid),
+        "id": cid,
+        **extra,
         "mock": mock,
         "model": "mock" if mock else MODEL,
         "embed_model": None if vec is None else ("mock" if mock else EMBED_MODEL),
@@ -211,9 +247,49 @@ def analyze(url_or_id: str, on_stage: Callable[[str], None] = lambda s: None,
         "scores": scores.model_dump(),
         "embedding": vec,
     }
-    cache_path(vid).write_text(json.dumps(rec, indent=2, ensure_ascii=False))
+    cache_path(cid).write_text(json.dumps(rec, indent=2, ensure_ascii=False))
     on_stage("done")
     return rec
+
+
+def analyze(url_or_id: str, on_stage: Callable[[str], None] = lambda s: None,
+            force: bool = False) -> dict:
+    vid = video_id(url_or_id)
+    if not force and (cached := load(vid)):
+        on_stage("cached")
+        return cached
+
+    on_stage("stage1")  # video -> text package
+    pkg = mock_stage1(vid) if MOCK else stage1(vid)
+    return _finish_record(vid, pkg, {"url": watch_url(vid), "source": "youtube"}, on_stage)
+
+
+def new_clip_id(video_bytes: bytes) -> str:
+    digest = hashlib.sha256(video_bytes).hexdigest()[:6]
+    return f"rec_{int(time.time() * 1000)}_{digest}"
+
+
+def analyze_bytes(video_bytes: bytes, mime_type: str, label: str = "",
+                  source: str = "screen_capture", fps: int = 3,
+                  cid: str | None = None,
+                  on_stage: Callable[[str], None] = lambda s: None) -> dict:
+    if not video_bytes:
+        raise ValueError("Empty video payload")
+    base_mime = _normalize_mime(mime_type)
+    ext = _EXT_BY_MIME.get(base_mime, ".webm")
+    cid = cid or new_clip_id(video_bytes)
+    filename = f"{cid}{ext}"
+    (RECORDINGS / filename).write_bytes(video_bytes)
+
+    on_stage("stage1")
+    pkg = (mock_stage1_bytes(cid, label, len(video_bytes), base_mime)
+           if MOCK else stage1_bytes(video_bytes, base_mime, fps=fps))
+    return _finish_record(cid, pkg, {
+        "source": source,
+        "video_file": filename,
+        "mime_type": base_mime,
+        "bytes_len": len(video_bytes),
+    }, on_stage)
 
 
 if __name__ == "__main__":

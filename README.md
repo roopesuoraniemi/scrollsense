@@ -1,6 +1,10 @@
-# ScrollSense: proof of concept
+# ScrollSense: screen-capture spike
 
-Paste a public YouTube Shorts URL. The app shows four things:
+Extends `spike/POC` with **app-agnostic screen recording** (matching the architecture in `scrollsense_context.pdf`: low-res 480p @ 5 FPS capture -> short rolling chunks -> inline bytes to Gemini `Part.from_bytes` -> DSM-5 theme scores & affect/semantic map).
+
+Click **Start Screen Capture** (or upload a local `.mp4`/`.webm` clip), pick any browser tab/window/screen (TikTok Web, YouTube Shorts, Reels, etc.), and either auto-chunk every 5–12s or click **Flush Clip Now (Swipe)** to simulate an Android `AccessibilityService` swipe boundary. YouTube URL analysis also still works.
+
+The app shows four things:
 
 1. **The original video** (YouTube embed).
 2. **The generated text package**: Gemini watches the video and describes what is said, written, shown and heard. *It is told not to judge the people in it.*
@@ -53,9 +57,9 @@ uv run python -m scrollsense.pipeline https://www.youtube.com/shorts/<id> https:
 | File | What it does |
 |---|---|
 | `scrollsense/schemas.py` | Structured-output schemas (`TextPackage`, `ClipScores`) and the DSM-5 criterion list |
-| `scrollsense/pipeline.py` | Gemini calls (stage 1, stage 2, embedding), caching, mock mode, CLI |
-| `scrollsense/server.py` | FastAPI: `/api/analyze` (background job), `/api/jobs/{id}`, `/api/clips`, `/api/clips/{id}`, `/api/meta` |
-| `web/index.html` | Single-page UI, no build step |
+| `scrollsense/pipeline.py` | Gemini calls (stage 1 via YouTube URL or inline bytes, stage 2, embedding), caching, mock mode, CLI |
+| `scrollsense/server.py` | FastAPI: `/api/analyze`, `/api/analyze-clip` (raw video bytes), `/api/recordings/{file}`, `/api/jobs/{id}`, `/api/clips` |
+| `web/index.html` | Single-page UI with `getDisplayMedia` + `MediaRecorder` screen capture, no build step |
 
 ## Notes and limits
 
