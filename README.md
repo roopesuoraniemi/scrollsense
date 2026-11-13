@@ -40,7 +40,7 @@ SCROLLSENSE_MOCK=1 uv run uvicorn scrollsense.server:app --port 8765
 **Batch-analyse from the command line** (results are cached in `data/clips/<videoId>.json`):
 
 ```bash
-uv run python -m scrollsense.pipeline https://www.youtube.com/shorts/<id> https://youtu.be/<id>
+uv run python -m scrollsense https://www.youtube.com/shorts/<id> https://youtu.be/<id>
 ```
 
 **Useful URLs:**
@@ -48,18 +48,32 @@ uv run python -m scrollsense.pipeline https://www.youtube.com/shorts/<id> https:
 - `#<videoId>` selects a clip.
 - Tick "Re-run (ignore cache)" to re-analyse a clip.
 
-## Files
+## Structure
 
-| File | What it does |
+A pure core inside a shell of swappable parts (see `rules/`).
+
+| File | Role |
 |---|---|
-| `scrollsense/schemas.py` | Structured-output schemas (`TextPackage`, `ClipScores`) and the DSM-5 criterion list |
-| `scrollsense/pipeline.py` | Gemini calls (stage 1, stage 2, embedding), caching, mock mode, CLI |
-| `scrollsense/server.py` | FastAPI: `/api/analyze` (background job), `/api/jobs/{id}`, `/api/clips`, `/api/clips/{id}`, `/api/meta` |
-| `web/index.html` | Single-page UI, no build step |
+| `scrollsense/schemas.py` | Structured-output models (`TextPackage`, `ClipScores`) and the DSM-5 `CRITERIA` |
+| `scrollsense/domain.py` | Pure values: `VideoId`, `ClipAnalysis`, `Stage`, `semantic_points()` (PCA) |
+| `scrollsense/prompts.py` | Prompt text for both stages |
+| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore` |
+| `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations |
+| `scrollsense/store.py` | `JsonFileStore` |
+| `scrollsense/service.py` | `AnalysisService`: describe, then score, then embed, then store |
+| `scrollsense/jobs.py` | `JobBoard`: runs background threads and tracks their status |
+| `scrollsense/api.py` | HTTP endpoints under `/api` |
+| `scrollsense/composition.py` | `Settings` from the environment, plus the wiring |
+| `scrollsense/server.py`, `__main__.py` | Entry points: web server and CLI |
+| `web/index.html`, `web/app.js` | The UI, with no build step |
+
+To add another model provider (e.g. Claude for scoring), implement `ContentAnalyser` and select it in `composition.py`.
+
+Tests: `uv run pytest`
 
 ## Notes and limits
 
 - **YouTube only:** Gemini reads public YouTube URLs directly. This is a preview feature, free for now, limited to 8 hours of video per day. Private and unlisted videos fail. TikTok videos can't be fetched.
-- **Model names:** the default model is `gemini-flash-latest`, and the embedding model is `gemini-embedding-001`. Override them with `GEMINI_MODEL` and `GEMINI_EMBED_MODEL` in `.env` if your project uses different names.
+- **Model names:** the default model is `gemini-4-hydrogen` (fastest: ~5 s to describe a clip), and the embedding model is `gemini-embedding-2`. `gemini-4-argon` (~9 s) and `gemini-4-carbon` (~21 s, likely most capable) gave near-identical output on a test clip. Override with `GEMINI_MODEL` and `GEMINI_EMBED_MODEL`. `-latest` aliases don't exist for this API version.
 - **Use a paid-tier key:** paid-tier prompts aren't used to improve Google's products. Only public video URLs and their text packages go to Gemini; no patient data does.
 - **Semantic map axes:** they are relative and shift as you add clips. Analyse at least three clips for a meaningful picture.
