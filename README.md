@@ -8,8 +8,7 @@ gentle check-in card.
 Scores describe the **content**, never the person, and are not a diagnosis.
 
 ```
-phone (userscript) ──► POST /api/views ──► queue ──► Gemini stage 1: video → text package
-                                                  └► Gemini stage 2: text → affect scores
+phone (userscript) ──► POST /api/views ──► queue ──► Gemini, one call: video → short description + affect scores
 laptop page ◄── feed, drift report, nudges          phone ◄── check-in card in the receipt
 ```
 
@@ -45,7 +44,7 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
   to take a break" blanks the phone; **Reset demo** erases the demo viewer and starts over.
 - **Add a Short:** paste a YouTube Short URL and it plays next.
 - **Live inference** (`SCROLLSENSE_LIVE_INFERENCE=1`): each viewer's first view of a Short starts
-  a fresh Gemini run (about 15 to 60 s), so results arrive after the video, never ahead of it. Until
+  a fresh Gemini run (about 2 to 6 s), so results arrive after the video, never ahead of it. Until
   the run is done the page shows a timer, and any older stored result is hidden from the feed,
   the drift and the nudge. Scores can differ a little between runs, so where the warning starts
   varies.
@@ -54,7 +53,7 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
 
 Each browser gets its own viewer (`demo-xxxxxxxx`, kept in localStorage; `?viewer=demo-name` pins
 one). Share `https://<tunnel>/?token=<token>`. With the scripted feed and window 5 the warning
-shows around Short 9, once the runs for those Shorts are done.
+and the check-in card show around Short 9, a few seconds after that Short starts.
 
 Gemini runs (live runs and pasted Shorts) are capped, because a shared link spends credits. Over
 the cap, views fall back to stored results:
@@ -100,9 +99,10 @@ python -I scripts/build_affect_norms.py --lexicons DIR     # rebuild the norms (
 ## Patient nudge
 
 **Research prototype, not a medical device.** When the last `SCROLLSENSE_NUDGE_STREAK` judged
-points are all `warning`, no card is open and the cooldown has passed, the next view receipt
-carries a card (while a Short is open the userscript sends an empty batch every 10 s, so a card
-that becomes due after the last swipe still arrives): "How do these videos feel right now?" with three equal options: I'm OK, I want
+points are all `warning` (by default the first warning is enough), no card is open and the
+cooldown has passed, the next view receipt carries a card. The userscript sends each view the
+moment a Short opens and, while one is open, an empty batch every 2 s, so the card shows a few
+seconds after the warning forms (analysis about 2 s, plus up to 2 s): "How do these videos feel right now?" with three equal options: I'm OK, I want
 to take a break, Not now. "I want to take a break" pauses the video and closes the tab (or
 switches to a blank page). There is no "refresh my feed" option, because steering the feed
 would erase the signal. The card never names a diagnosis, a mood or a video. Design:
@@ -111,7 +111,7 @@ would erase the signal. The card never names a diagnosis, a mood or a video. Des
 | Variable | Default | Meaning |
 |---|---|---|
 | `SCROLLSENSE_NUDGE_ENABLED` | `1` | `0` turns nudges off |
-| `SCROLLSENSE_NUDGE_STREAK` | `2` | Consecutive judged points at `warning` |
+| `SCROLLSENSE_NUDGE_STREAK` | `1` | Consecutive judged points at `warning` |
 | `SCROLLSENSE_NUDGE_COOLDOWN_S` | `600` | Seconds between cards (doubled after "I'm OK") |
 | `SCROLLSENSE_NUDGE_OK_FACTOR` | `2` | Cooldown multiplier after "I'm OK" |
 | `SCROLLSENSE_NUDGE_EXPIRE_S` | `900` | An unanswered card stops showing after this |
@@ -137,7 +137,37 @@ All routes need `Authorization: Bearer <token>` when `SCROLLSENSE_TOKEN` is set.
 | `POST /api/demo/shorts` `{viewer, url}` | 201 `{video_id, state}`; checks the run budget (and in cache mode queues the Short); 400 bad input, 429 over budget |
 
 Other settings: `SCROLLSENSE_WORKERS` (2), `SCROLLSENSE_RPM` (20 analyses per minute, 0 = unpaced),
-`SCROLLSENSE_DATA` (`data`), `GEMINI_MODEL` (`gemini-4-hydrogen`).
+`SCROLLSENSE_DATA` (`data`).
+
+### Analysis speed
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GEMINI_PIPELINE` | `one_call` | `one_call`: Gemini watches the Short at low resolution and returns a short description and the scores in one call. `two_stage`: a full text package (transcript, visuals, audio), then scoring from the text |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` (one_call), `gemini-4-hydrogen` (two_stage) | Overrides the pipeline's model |
+| `GEMINI_THINKING_OFF` | `0` | `1` turns thinking off (one_call); `gemini-3.5-flash-lite` rejects it, `gemini-3.1-flash-lite` accepts it |
+| `GEMINI_MAX_WATCH_S` | `30` | Gemini watches at most the first this many seconds of a video (`0`: all of it), so a long video never stalls the demo |
+
+Measured on 10 Shorts: `one_call` with `gemini-3.5-flash-lite` takes about 2 s (median; 2.3 s at
+most, up to about 8 s under load) and matched the stored two-stage valence on all 10;
+`gemini-3.1-flash-lite` without thinking is as fast but less perceptive; `two_stage` takes 20-30 s.
+People watch a Short for about 14-16 s on average, so `one_call` results arrive before the swipe.
+With `one_call` the page's **Details** (transcript, on-screen text, visuals, audio) stay empty.
+
+**Slower models do not score better.** On 41 Shorts covering every valence and arousal level
+(plus the 6 longest), compared with the stored two-stage `gemini-4-hydrogen` analyses:
+
+| One call, low resolution | Median | Slowest | Valence exact (MAE) | Arousal exact (MAE) | Low-mood agrees |
+|---|---|---|---|---|---|
+| `gemini-3.5-flash-lite`, 30 s cap (default) | 3.4 s | 5.7 s | 28/41 (0.39) | 18/41 (0.59) | 39/41 |
+| `gemini-3.5-flash-lite`, no cap | 2.7 s | 6.5 s | 30/41 (0.37) | 22/41 (0.46) | 37/41 |
+| `gemini-3.5-flash` | 7.7 s | 11.5 s | 28/41 (0.39) | 18/41 (0.56) | 37/41 |
+| `gemini-3.8-flash` | 8.6 s | 11.7 s | 26/41 (0.41) | 17/41 (0.59) | 36/41 |
+| `gemini-4-hydrogen` | 11.8 s | 20.5 s | 29/41 (0.29) | 21/41 (0.49) | 38/41 |
+
+Differences of a few Shorts are within run-to-run noise; hydrogen's slightly lower valence error
+is the same model as the reference. Arousal is the noisy axis for every model.
+
 
 ## Structure
 
@@ -145,13 +175,13 @@ A pure core inside a shell of swappable parts (see `rules/`).
 
 | File | Role |
 |---|---|
-| `scrollsense/schemas.py`, `prompts.py` | Structured-output models (`TextPackage`, `ClipScores`) and the prompts |
+| `scrollsense/schemas.py`, `prompts.py` | Structured-output models (`TextPackage`, `ClipScores`, `QuickAnalysis`) and the prompts |
 | `scrollsense/domain.py`, `views.py` | Pure values: `VideoId`, `ClipAnalysis`, `ViewerId`, `ViewEvent` |
 | `scrollsense/drift/` | Drift against the affect norm: pure core and the text CLI |
 | `scrollsense/affect_norms.py`, `reference/affect_norms.json` | The global affect norm |
 | `scrollsense/nudge.py`, `nudgelog.py`, `nudge_api.py` | Nudge policy and cards, JSONL log, routes |
 | `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog`, `NudgeLog`, `Nudger` |
-| `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations |
+| `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations (one-call and two-stage Gemini, mock) |
 | `scrollsense/store.py`, `viewlog.py` | JSON and JSONL storage |
 | `scrollsense/service.py`, `analysis_queue.py`, `intake.py` | Describe-then-score pipeline, paced queue, view intake |
 | `scrollsense/scheduling.py` | Cached or live analysis scheduling, and the run budget |

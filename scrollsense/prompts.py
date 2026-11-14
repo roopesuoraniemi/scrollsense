@@ -1,4 +1,5 @@
-"""Prompt text for the describing and scoring stages. Pure: no model calls here."""
+"""Prompt text for the describing and scoring stages, and for the one-call pipeline that does
+both while watching. Pure: no model calls here."""
 from .schemas import TextPackage
 
 # Why no inferring a real person's feelings, health or mental state: that would be
@@ -64,7 +65,9 @@ __EXAMPLES = """1. Format: talking_to_camera. Transcript: "Depression isn't just
    -> negative 2, positive 2 (valence 3), arousal 1, coping_or_recovery, hopeful true."""
 
 __SCORE_TEMPLATE = """You score the AFFECT of a short video from its text description.
-You are not assessing any person, only what the content communicates to a viewer.
+""" + "{rules}"
+
+__SCORE_RULES = """You are not assessing any person, only what the content communicates to a viewer.
 Use the intended meaning and emotional cues as well as the literal words: irony and memes
 often say the opposite of their surface.
 
@@ -92,10 +95,17 @@ music), 3 moderate, 4 lively (upbeat music, quick cuts, excitement), 5 frantic o
 Calibration examples (invented):
 {examples}
 
-Write the rationale first, then the numbers.
+Write the rationale first, then the numbers."""
 
-TEXT PACKAGE:
-{package}"""
+__DESCRIBE_RULES = DESCRIBE_PROMPT[DESCRIBE_PROMPT.index("People:"):DESCRIBE_PROMPT.index("Keep transcript")]
+
+__QUICK_TEMPLATE = """You watch a short video, describe it briefly, then score its AFFECT.
+
+{describe}
+{rules}
+
+Fill the schema in order: the short description first, then the rationale, then the numbers.
+Paraphrase speech and on-screen text; never quote song lyrics."""
 
 
 def package_text(package: TextPackage) -> str:
@@ -109,5 +119,11 @@ def package_text(package: TextPackage) -> str:
 
 def scoring_prompt(package: TextPackage) -> str:
     """The stage-2 prompt for `package`."""
-    return __SCORE_TEMPLATE.format(examples=__EXAMPLES,
-                                   package=package_text(package))
+    rules = __SCORE_RULES.format(examples=__EXAMPLES)
+    return __SCORE_TEMPLATE.format(rules=rules) + f"\n\nTEXT PACKAGE:\n{package_text(package)}"
+
+
+def quick_prompt() -> str:
+    """The one-call prompt: sent with the video, answered as a `QuickAnalysis`."""
+    return __QUICK_TEMPLATE.format(describe=__DESCRIBE_RULES.strip(),
+                                   rules=__SCORE_RULES.format(examples=__EXAMPLES))

@@ -5,7 +5,7 @@
 
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 2000;
-const HEARTBEAT_MS = 4000;   // an empty view batch, so a card that becomes due still arrives
+const HEARTBEAT_MS = 2000;   // an empty view batch, so a card that becomes due arrives within 2 s
 const SWIPE_PX = 40;
 const WHEEL_LOCK_MS = 650;
 const state = {
@@ -215,6 +215,7 @@ async function reset() {
   Object.assign(state, { playlist: [...state.script], feed: [], clips: [], drift: null, current: null, signature: '', card: null, onBreak: false });
   state.answered.clear();
   state.firstShown.clear();
+  resetArrow();
   $('overlay').innerHTML = '';
   addMessage('');
   show(0);
@@ -358,6 +359,7 @@ function renderMap() {
   const current = points.find((p) => p.clip.id === state.current?.id);
   const extra = current && !shown.includes(current) ? [current] : [];
   $('map').innerHTML = axes() + normalOverlay() + [...shown, ...extra].map(dot).join('');
+  animateArrow();
 }
 
 function axes() {
@@ -425,15 +427,54 @@ function lowMoodQuadrant(cx, cy) {
     <text x="${L + 6}" y="${bottom - 8}" style="fill:var(--warn)">depressive signal zone</text></g>`;
 }
 
+// The arrow glides from where it was drawn last to the new average (and fades to the new level's
+// colour), instead of jumping, whenever a newly analysed Short moves it.
+const ARROW_MS = 900;
+const arrow = { origin: null, target: null, shown: null, colour: null, shownColour: null, frame: 0 };
+
 function driftArrow(cx, cy) {
   const centroid = state.drift.recent.centroid;
-  if (!centroid) return '';
-  const tx = affectX(centroid.valence), ty = affectY(centroid.arousal);
-  const colour = LEVEL_STROKE[state.drift.level];
-  const angle = Math.atan2(ty - cy, tx - cx);
-  const wing = (turn) => `${(tx - 11 * Math.cos(angle + turn)).toFixed(1)},${(ty - 11 * Math.sin(angle + turn)).toFixed(1)}`;
-  const tip = Math.hypot(tx - cx, ty - cy) > 5 ? `<polygon points="${tx},${ty} ${wing(0.45)} ${wing(-0.45)}" fill="${colour}"/>` : '';
-  return `<g><title>Average of the last ${state.drift.recent.n} Shorts</title><line x1="${cx}" y1="${cy}" x2="${tx}" y2="${ty}" stroke="${colour}" stroke-width="3" stroke-linecap="round"/>${tip}<circle cx="${cx}" cy="${cy}" r="3" fill="var(--mut)"/></g>`;
+  if (!centroid) return resetArrow();
+  Object.assign(arrow, { origin: { x: cx, y: cy }, target: { x: affectX(centroid.valence), y: affectY(centroid.arousal) }, colour: LEVEL_STROKE[state.drift.level] });
+  const colour = arrow.shownColour ?? arrow.colour;
+  const ease = 'style="transition:stroke .6s ease,fill .6s ease"';
+  return `<g><title>Average of the last ${state.drift.recent.n} Shorts</title><line id="arrow-line" x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="${colour}" stroke-width="3" stroke-linecap="round" ${ease}/><polygon id="arrow-head" fill="${colour}" ${ease}/><circle cx="${cx}" cy="${cy}" r="3" fill="var(--mut)"/></g>`;
+}
+
+function resetArrow() {
+  cancelAnimationFrame(arrow.frame);
+  Object.assign(arrow, { target: null, shown: null, shownColour: null });
+  return '';
+}
+
+function animateArrow() {
+  cancelAnimationFrame(arrow.frame);
+  if (!arrow.target || !$('arrow-line')) return;
+  const from = arrow.shown ?? arrow.origin, to = arrow.target;
+  const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  placeArrow(from);
+  $('arrow-line').getBoundingClientRect();   // commit the old colour so the change transitions
+  ['arrow-line', 'arrow-head'].forEach((id, i) => $(id).setAttribute(i ? 'fill' : 'stroke', arrow.colour));
+  arrow.shownColour = arrow.colour;
+  let begin = null;   // the first frame's timestamp: rAF times can precede performance.now()
+  const frame = (now) => {
+    begin ??= now;
+    const t = instant ? 1 : Math.min(1, Math.max(0, (now - begin) / ARROW_MS));
+    const eased = 1 - (1 - t) ** 3;
+    placeArrow({ x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased });
+    if (t < 1) arrow.frame = requestAnimationFrame(frame);
+  };
+  arrow.frame = requestAnimationFrame(frame);
+}
+
+function placeArrow(tip) {
+  const { x: cx, y: cy } = arrow.origin;
+  arrow.shown = tip;
+  $('arrow-line').setAttribute('x2', tip.x.toFixed(1));
+  $('arrow-line').setAttribute('y2', tip.y.toFixed(1));
+  const angle = Math.atan2(tip.y - cy, tip.x - cx);
+  const wing = (turn) => `${(tip.x - 11 * Math.cos(angle + turn)).toFixed(1)},${(tip.y - 11 * Math.sin(angle + turn)).toFixed(1)}`;
+  $('arrow-head').setAttribute('points', Math.hypot(tip.x - cx, tip.y - cy) > 5 ? `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ${wing(0.45)} ${wing(-0.45)}` : '');
 }
 
 // ---------------------------------------------------------------- wiring
