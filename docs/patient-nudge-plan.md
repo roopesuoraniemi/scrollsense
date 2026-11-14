@@ -49,12 +49,12 @@ A card over the feed, in calm colours. English or Finnish, according to the pati
 > - 🙂 **I'm OK**  ·  ⏱ **Not now**
 
 Design notes:
-- The wording comes from the drift *reason*, not a diagnosis. For example, sleep/fatigue themes at night give: "It's late. Want to try winding down?"
+- The wording never comes from the drift reason: the card text is fixed and names no mood or content.
 - "Talk to someone" uses a contact the patient chose at onboarding (a friend, a peer, or the clinic). The demo uses a placeholder number.
 - The breathing page is static: `GET /calm`, a 60-second paced animation (4 s in, 6 s out). It logs completion.
 
 ## A9 and crisis alerts
-Decision: no crisis or suicide alerts, for the patient or the clinician. The earlier plan had a separate crisis card and clinician alert for A9 (death/suicide) themes; it was removed because the feed signal is not reliable enough for that kind of alert. Prevention and educational content also scores A9 > 0 (in tuning, "Nine Symptoms of a Depressive Episode" got A9 = 1). A9 remains one of the nine content theme scores and counts in the theme load like A1–A8.
+Decision: no crisis or suicide alerts, for the patient or the clinician. The earlier plan had a separate crisis card and clinician alert for A9 (death/suicide) themes; it was removed because the feed signal is not reliable enough for that kind of alert. Prevention and educational content also scored A9 > 0 (in tuning, "Nine Symptoms of a Depressive Episode" got A9 = 1). The DSM-5 theme scores, A9 included, have since been removed from the scoring altogether.
 
 ## How it reaches the phone (demo vs product)
 

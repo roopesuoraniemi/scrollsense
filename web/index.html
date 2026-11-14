@@ -3,98 +3,146 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ScrollSense POC</title>
+<title>ScrollSense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#f6f5f2;--card:#fff;--ink:#1f1e1c;--mut:#6b6a66;--line:#e3e1db;--acc:#534AB7;--acc-bg:#EEEDFE;
---warm:#D85A30;--cool:#378ADD;--ok:#1D9E75;--danger:#A32D2D;--danger-bg:#FCEBEB;--seg:#ecebe6;
---amber:#854F0B;--amber-bg:#FAEEDA}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#21201e;--ink:#ecebe6;--mut:#a3a19a;--line:#35342f;
---acc:#AFA9EC;--acc-bg:#2c2858;--danger:#F09595;--danger-bg:#3a1a1a;--seg:#33322d;
---amber:#F2C37A;--amber-bg:#3a2c14}}
+:root{
+  --paper:#F6F7F5;--card:#FFFFFF;--ink:#1D2226;--mut:#5F686E;--faint:#8A9298;--line:#DCE1DF;--acc:#3E5C7A;
+  --warn:#B42318;--warn-bg:#FCEBE9;--warn-line:#F1C4BE;
+  --watch:#8A5A00;--watch-bg:#FBF0D9;--watch-line:#EED8A8;
+  --calm:#1E7A4C;--calm-bg:#E7F3EC;--calm-line:#BEDCCA;
+  --radius:10px;--gap:14px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#141719;--card:#1C2023;--ink:#E7EAEC;--mut:#9AA3A9;--faint:#6E777D;--line:#2E3438;--acc:#9DB7D3;
+  --warn:#F2A79E;--warn-bg:#3A1D1A;--warn-line:#5A2A25;
+  --watch:#EBC37A;--watch-bg:#33270F;--watch-line:#4F3D18;
+  --calm:#8FD3AE;--calm-bg:#13302A;--calm-line:#24503F;
+}}
+:root[data-theme="dark"]{
+  --paper:#141719;--card:#1C2023;--ink:#E7EAEC;--mut:#9AA3A9;--faint:#6E777D;--line:#2E3438;--acc:#9DB7D3;
+  --warn:#F2A79E;--warn-bg:#3A1D1A;--warn-line:#5A2A25;
+  --watch:#EBC37A;--watch-bg:#33270F;--watch-line:#4F3D18;
+  --calm:#8FD3AE;--calm-bg:#13302A;--calm-line:#24503F;
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-header h1{font-size:18px;font-weight:600;margin:0}
-.badge{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--acc-bg);color:var(--acc)}
-.badge.mock{background:#FAEEDA;color:#854F0B}
-form{display:flex;gap:8px;padding:14px 20px;flex-wrap:wrap;align-items:center}
-input[type=text]{flex:1;min-width:240px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
-button{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;cursor:pointer}
-button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
-@media (prefers-color-scheme:dark){button.primary{color:#1b1840}}
-button.on{border-color:var(--acc);color:var(--acc)}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 "Atkinson Hyperlegible",system-ui,sans-serif}
+button,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.wrap{max-width:1280px;margin:0 auto;padding:0 20px 28px}
+
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 0 12px}
+header h1{font-size:19px;font-weight:700;margin:0;letter-spacing:-.01em}
+#mode{font-size:13px;color:var(--faint)}
+#mode.mock{color:var(--watch)}
+.spacer{flex:1}
 #status{font-size:13px;color:var(--mut)}
-#status.err{color:var(--danger)}
-#list{display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 8px}
-select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
-#list button.queued,#list button.pending{border-style:dashed;color:var(--mut)}
-#list button.failed{color:var(--danger)}
-#list button{font-size:12px;padding:4px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-main{display:grid;grid-template-columns:minmax(260px,330px) minmax(0,1fr) minmax(0,1fr);gap:16px;padding:8px 20px 28px}
-@media (max-width:1100px){main{grid-template-columns:minmax(260px,330px) minmax(0,1fr)}#col3{grid-column:1/-1}}
-@media (max-width:700px){main{grid-template-columns:minmax(0,1fr)}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
-.card h2{font-size:14px;font-weight:600;margin:0 0 10px;display:flex;align-items:center;gap:8px}
-.card h2 .step{font-size:11px;font-weight:500;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 6px}
-.video{position:relative;width:100%;max-width:330px;margin:0 auto;aspect-ratio:9/16;border-radius:10px;overflow:hidden;background:#000}
+#status.err{color:var(--warn)}
+label.viewer{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:8px}
+select{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+#live{display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:13px}
+#live i{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+#live[aria-pressed="true"]{border-color:var(--calm-line);color:var(--calm)}
+#live[aria-pressed="true"] i{background:var(--calm)}
+
+#signals{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:10px;margin-bottom:12px}
+#signals.solo{grid-template-columns:minmax(0,1fr)}
+.panel{border:1px solid var(--line);border-radius:var(--radius);padding:9px 14px;background:var(--card)}
+#drift{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center;min-height:62px}
+#drift .what b{display:block;font-size:15px}
+#drift .what span{font-size:13px}
+.spark{position:relative}
+.spark svg{display:block;width:100%;height:46px}
+.spark span{position:absolute;right:0;transform:translateY(-120%);font-size:11px;opacity:.8}
+#drift.quiet .what span{color:var(--mut)}
+#drift.watch{background:var(--watch-bg);border-color:var(--watch-line);color:var(--watch)}
+#drift.warning{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn)}
+#nudges{background:var(--calm-bg);border-color:var(--calm-line);color:var(--calm);font-size:13px;line-height:1.6}
+#nudges:empty{display:none}
+#nudges b{font-weight:700}
+
+#strip{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+#strip .nav{width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:var(--card);cursor:pointer;display:grid;place-items:center;padding:0}
+#strip .nav:disabled{opacity:.35;cursor:default}
+#thumbs{display:flex;gap:8px;overflow:hidden;flex:0 1 640px;min-width:0}
+.thumb{width:84px;flex:none;border:0;background:none;padding:0;cursor:pointer;text-align:left}
+.thumb .img{display:block;width:84px;aspect-ratio:16/9;border-radius:6px;border:1px solid var(--line);background:var(--line) center/cover no-repeat}
+.thumb .t{display:block;font-size:11px;color:var(--mut);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thumb.on .img{border:2px solid var(--acc)}
+.thumb.on .t{color:var(--ink);font-weight:700}
+.thumb.queued .img,.thumb.pending .img{opacity:.5;border-style:dashed}
+.thumb.failed .t{color:var(--warn)}
+#count{font-size:13px;color:var(--mut);margin-left:4px;white-space:nowrap}
+
+main{display:grid;grid-template-columns:minmax(200px,.55fr) minmax(0,.85fr) minmax(0,1fr);gap:var(--gap);align-items:start}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.video{position:relative;width:100%;aspect-ratio:9/16;border-radius:8px;overflow:hidden;background:#0d0f10}
 .video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-.empty{color:var(--mut);font-size:14px;padding:24px 0;text-align:center}
-dl{margin:0}dt{font-size:12px;color:var(--mut);margin-top:10px}dd{margin:2px 0 0;white-space:pre-wrap}
-dd.scroll{max-height:160px;overflow:auto;border-left:2px solid var(--line);padding-left:10px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
-.chip{font-size:12px;padding:2px 8px;border-radius:6px;border:1px solid var(--line)}
-.toggle{display:flex;gap:6px;margin-bottom:8px}.toggle button{font-size:12px;padding:4px 10px}
-svg text{font:11px system-ui,sans-serif;fill:var(--mut)}
-.note{font-size:12px;color:var(--mut);margin:6px 0 0}
-.row{display:grid;grid-template-columns:34px minmax(0,1fr) 120px 22px;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
-.row:last-child{border-bottom:0}.row .code{font-size:12px;color:var(--mut)}
-.bar{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}.bar i{height:10px;border-radius:3px;background:var(--seg)}
-.bar i.f{background:var(--acc)}
-.total{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}.total b{font-size:28px;font-weight:600}
-.banner{background:var(--danger-bg);color:var(--danger);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:10px}
-.mockbanner{background:#FAEEDA;color:#854F0B}
-button:disabled{opacity:.45;cursor:default}
-#drift{padding:0 20px}#drift:empty{display:none}
-#nudges{padding:6px 20px 0;font-size:13px;color:var(--mut)}#nudges:empty{display:none}#nudges b{color:var(--ink);font-weight:600}
-.drift{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-radius:10px;padding:9px 14px;margin-top:12px;font-size:13px;border:1px solid var(--line)}
-.drift.quiet{color:var(--mut);background:transparent}
-.drift.watch{background:var(--amber-bg);color:var(--amber);border-color:transparent}
-.drift.warning{background:var(--danger-bg);color:var(--danger);border-color:transparent}
-.drift .what{flex:1;min-width:240px}.drift .what b{font-weight:600}
-.drift .why{margin:3px 0 0}.drift .chips button{font-size:12px;padding:2px 9px;border-radius:6px;color:inherit;border-color:currentColor;background:transparent;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.spark{flex:none}.spark text{font-size:9px}
-blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);background:var(--bg);border-radius:0 8px 8px 0;font-size:14px}
+.video-link{display:block;font-size:12px;color:var(--mut);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{color:var(--mut);font-size:14px;padding:28px 0;text-align:center}
+
+#pkg h2{font-size:17px;font-weight:700;margin:0;line-height:1.3}
+#pkg .format{font-size:13px;color:var(--mut)}
+#pkg blockquote{margin:12px 0;padding:2px 0 2px 12px;border-left:3px solid var(--acc);font-style:italic}
+#pkg dl{margin:0}
+#pkg dt{font-size:12px;color:var(--mut);margin-top:10px}
+#pkg dd{margin:1px 0 0;max-width:62ch}
+details{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+summary{cursor:pointer;color:var(--mut);font-size:13px}
+details dd{white-space:pre-wrap;max-height:160px;overflow:auto}
+.mocknote{font-size:12px;color:var(--watch);margin:0 0 8px}
+
+#map{display:block;width:100%;height:auto}
+#map text{font:11px "Atkinson Hyperlegible",system-ui,sans-serif;fill:var(--mut)}
+.legend{font-size:12px;color:var(--mut);margin:6px 0 0}
+
+@media (max-width:1000px){
+  main{grid-template-columns:minmax(180px,.6fr) minmax(0,1fr)}
+  main .map{grid-column:1/-1;max-width:560px}
+}
+@media (max-width:680px){
+  .wrap{padding:0 16px 24px}
+  #signals,main{grid-template-columns:minmax(0,1fr)}
+  main .video-card{max-width:240px}
+  #drift{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
-<header>
-  <h1>ScrollSense</h1><span class="badge" id="mode">…</span>
-  <span style="font-size:13px;color:var(--mut)">Live: the Shorts scrolled on the phone → text package → embedded space → DSM-5 themes. Not a diagnostic tool.</span>
-</header>
-<div id="drift" role="status" aria-live="polite" aria-label="Drift against research norms"></div>
-<div id="nudges" aria-label="Nudges shown to this person"></div>
-<form id="f" onsubmit="return false">
-  <label style="font-size:13px;color:var(--mut)">Viewer <select id="viewer" aria-label="Viewer"></select></label>
-  <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="follow" checked> Follow live</label>
-  <span id="status" role="status"></span>
-</form>
-<div id="list" aria-label="Analysed clips"></div>
-<main>
-  <section>
-    <div class="card"><h2><span class="step">1</span>Original video</h2><div id="video"><div class="empty">Scroll Shorts on the phone: they appear here live.</div></div></div>
+<div class="wrap">
+  <header>
+    <h1>ScrollSense</h1>
+    <span id="mode"></span>
+    <span class="spacer"></span>
+    <span id="status" role="status"></span>
+    <label class="viewer">Viewer <select id="viewer"></select></label>
+    <button id="live" type="button" aria-pressed="true"><i aria-hidden="true"></i>Live</button>
+  </header>
+
+  <section id="signals" class="solo" aria-label="Feed signals">
+    <div id="drift" class="panel quiet" role="status" aria-live="polite"></div>
+    <div id="nudges" class="panel" aria-label="Nudges sent to the phone"></div>
   </section>
-  <section>
-    <div class="card"><h2><span class="step">2</span>Generated text package</h2><div id="pkg"><div class="empty">No clip selected.</div></div></div>
-  </section>
-  <section id="col3">
-    <div class="card"><h2><span class="step">3</span>Point in embedded space</h2>
-      <div class="toggle"><button id="tAff" class="on" type="button">Affect</button><button id="tCon" type="button">Content similarity</button><button id="tSym" type="button">Symptoms</button></div>
-      <svg id="map" viewBox="0 0 360 330" width="100%" role="img" aria-label="Map of analysed clips"></svg>
-      <p class="note" id="mapnote"></p>
-    </div>
-    <div class="card"><h2><span class="step">4</span>DSM-5 theme scores</h2><div id="dsm"><div class="empty">No clip selected.</div></div></div>
-  </section>
-</main>
+
+  <nav id="strip" aria-label="Scrolled Shorts">
+    <button class="nav" id="prev" type="button" aria-label="Older Short">&#8249;</button>
+    <div id="thumbs"></div>
+    <button class="nav" id="next" type="button" aria-label="Newer Short">&#8250;</button>
+    <span id="count"></span>
+  </nav>
+
+  <main>
+    <section class="card video-card" aria-label="Video"><div id="video"><div class="empty">Scroll Shorts on the phone to see them here.</div></div></section>
+    <section class="card" aria-label="Text package"><div id="pkg"><div class="empty">No Short selected.</div></div></section>
+    <section class="card map" aria-label="Affect map">
+      <svg id="map" viewBox="0 0 360 330" role="img" aria-label="Valence and arousal of the recent Shorts against the normal range"></svg>
+      <p class="legend">Dashed ellipse: 1 SD normal range. Red zone: low mood (lower valence and arousal). Dots: the Shorts in the drift window.</p>
+    </section>
+  </main>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

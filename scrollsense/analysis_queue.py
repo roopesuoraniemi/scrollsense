@@ -57,7 +57,7 @@ class AnalysisQueue:
     """Analyses each video at most once per process, on `start`-ed daemon worker threads.
 
     A video already stored, queued, in flight or failed is never enqueued again: failures
-    are kept with their error and are not retried (re-run them through /api/analyze).
+    are kept with their error and are not retried (re-run them with `python -m scrollsense`).
     State lives in memory and is lost on restart; stored analyses are not.
     """
 

@@ -1,14 +1,13 @@
 [project]
 name = "scrollsense"
 version = "0.1.0"
-description = "POC: read a short-video feed through Gemini (video -> text package -> DSM-5 themes)"
+description = "Research prototype: read a short-video feed through Gemini (video -> text package -> affect drift)"
 requires-python = ">=3.10"
 dependencies = [
     "google-genai>=1.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-dotenv>=1.0",
-    "numpy>=1.26",
     "pydantic>=2.6",
 ]
 

@@ -20,7 +20,6 @@ from ..store import JsonFileStore
 from ..views import ViewerId
 from ..viewlog import JsonlViewLog
 from .affect import FeatureRow
-from .clinical import ClinicalExposure, ClinicalItem
 from .core import DriftConfig, DriftDetector, DriftReport, TimelinePoint
 
 
@@ -79,46 +78,27 @@ def feature_line(row: FeatureRow) -> str:
             f"{row.effect:>7.2f} {row.risk_effect:>6.2f}")
 
 
-def item_line(item: ClinicalItem) -> str:
-    return (f"  {item.code} {item.label:<24} {item.present:>3} {item.share:>6.2f} "
-            f"{item.score:>3}  {item.frequency_label}")
-
-
 def timeline_line(point: TimelinePoint) -> str:
     filled = round(min(point.score, BAR_FULL_SCALE) / BAR_FULL_SCALE * BAR_WIDTH)
     return (f"  {clock(point.seen_at)}  {point.score:5.2f} {'#' * filled:<{BAR_WIDTH}} "
-            f"PHQ {point.exposure:>2}  {point.level}")
-
-
-def clinical_lines(clinical: ClinicalExposure | None) -> list[str]:
-    if clinical is None:
-        return ["clinical: no analysed Shorts yet"]
-    return [f"clinical (content exposure, PHQ-9 style, over {clinical.window_n} Shorts): "
-            f"{clinical.total}/27 {clinical.band}, pattern {clinical.pattern}",
-            "  item                         n  share score frequency",
-            *map(item_line, clinical.items), f"  {clinical.reference}"]
+            f"{point.level}")
 
 
 def render(report: DriftReport) -> str:
-    """The report as plain text: verdict, reasons, affect table, clinical items, evidence,
-    timeline."""
+    """The report as plain text: verdict, reasons, affect table, evidence, timeline."""
     c, n, r = report.config, report.affect_baseline, report.recent
     score = f"{report.score:.2f}" if report.score is not None else "-"
-    head = [f"{report.viewer}: {report.level.upper()}  affect {report.affect_level} "
-            f"(score {score} SD into the bottom left; watch > {c.watch}, warn > {c.warn})  clinical "
-            f"{report.clinical_level}  (window {c.window})",
+    head = [f"{report.viewer}: {report.level.upper()}  (score {score} SD into the bottom left; "
+            f"watch > {c.watch}, warn > {c.warn}; window {c.window})",
             f"{report.note}. Describes the content shown; not a diagnosis.",
             f"recent: {r.n} Shorts since {clock(r.first_seen_at)}; pending analysis: "
             f"{report.pending}; affect norm: {n.source}"]
     table = ["affect vs norm:", "  feature     dir   norm     sd  recent  effect   risk",
              *map(feature_line, report.features)]
     return "\n".join([*head, *__listing("reasons", report.reasons), *table,
-                      *clinical_lines(report.clinical),
-                      *__listing("evidence", [f"{e.video_id} {'/'.join(e.central) or '-'} "
-                                              f"risk {e.risk:.2f}: {e.title}"
+                      *__listing("evidence", [f"{e.video_id} risk {e.risk:.2f}: {e.title}"
                                               for e in report.evidence]),
-                      f"timeline (affect score and PHQ-9-style exposure of the last {c.window} "
-                      "Shorts at each Short):", *map(timeline_line, report.timeline)])
+                      f"timeline (affect score of the last {c.window} Shorts at each Short):", *map(timeline_line, report.timeline)])
 
 
 def __listing(title: str, lines: Sequence[str]) -> list[str]:

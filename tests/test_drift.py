@@ -4,28 +4,24 @@ from typing import Sequence
 import pytest
 
 from scrollsense.affect_norms import load_affect_norms
-from scrollsense.domain import ClipAnalysis, Embedding
+from scrollsense.domain import ClipAnalysis
 from scrollsense.drift.affect import FEATURES
 from scrollsense.drift.core import DriftConfig, DriftDetector, DriftReport
-from scrollsense.drift.levels import most_severe
 from scrollsense.drift.observe import Observed, observe
-from scrollsense.schemas import CRITERIA, ClipScores, TextPackage
+from scrollsense.schemas import ClipScores, TextPackage
 from scrollsense.views import ViewEvent
 
 from .fakes import label
 
 NORMS = load_affect_norms()
 NORM = NORMS.baseline
-# valence 4, arousal 3, no negative affect, no themes, unrelated stance.
+# valence 4, arousal 3, no negative affect, unrelated stance.
 NEUTRAL = ClipScores(rationale="r", evidence="calm", negative_affect=0, positive_affect=2,
-                     arousal=3, stance="unrelated", hopeful=False, **{c.key: 0 for c in CRITERIA})
-# valence 1, arousal 1, depressed mood and anhedonia intense.
+                     arousal=3, stance="unrelated", hopeful=False)
+# valence 1, arousal 1.
 SAD = NEUTRAL.model_copy(update={"negative_affect": 3, "positive_affect": 0, "arousal": 1,
-                                 "stance": "dwelling_or_romanticising", "a1_depressed_mood": 3,
-                                 "a2_anhedonia": 3})
+                                 "stance": "dwelling_or_romanticising"})
 HAPPY = NEUTRAL.model_copy(update={"positive_affect": 3, "arousal": 5})
-# Upbeat delivery (valence 4, arousal 3), but five criteria are central themes.
-THEMED = NEUTRAL.model_copy(update={c.key: 2 for c in CRITERIA[:5]})
 SMALL = DriftConfig(window=4)
 
 
@@ -44,7 +40,7 @@ def analysis(i: int, scores: ClipScores) -> ClipAnalysis:
                           intended_meaning="", main_message="", format="other",
                           people_present=False, language="en")
     return ClipAnalysis(video_id=vid(i), analyser=label(), created=0.0, package=package,
-                        scores=scores, embedding=Embedding())
+                        scores=scores)
 
 
 def feed(clips: Sequence[ClipScores]) -> Observed:
@@ -89,21 +85,21 @@ def test_affect_score_is_the_drift_length_in_research_sds() -> None:
     assert rows["arousal"].effect == pytest.approx((2 - 2.605) / 0.448)
     assert rows["arousal"].norm_sd == 0.448 and rows["arousal"].norm_mean == 2.605
     expected = math.hypot((3 - 3.032) / 0.637, (2 - 2.605) / 0.448)
-    assert report.score == pytest.approx(expected) and report.affect_level == "warning"
+    assert report.score == pytest.approx(expected) and report.level == "warning"
     assert report.affect_baseline == NORM
 
 
 def test_affect_deviates_only_past_1_sd_in_the_bottom_left_quadrant() -> None:
     flat = NEUTRAL.model_copy(update={"positive_affect": 0})  # valence 3, arousal 3
     within = judge([flat, flat.model_copy(update={"arousal": 2})] * 2)  # mean arousal 2.5
-    assert 0 < (within.score or 0) <= 1 and within.affect_level == "normal"
+    assert 0 < (within.score or 0) <= 1 and within.level == "normal"
     agitated_sad = SAD.model_copy(update={"arousal": 5})  # valence 1, arousal 5: top left
     assert judge([agitated_sad] * 4).score == 0.0
     calm_happy = HAPPY.model_copy(update={"arousal": 1})  # valence 5, arousal 1: bottom right
-    assert judge([calm_happy] * 4).affect_level == "normal"
+    assert judge([calm_happy] * 4).level == "normal"
 
 
-def test_affect_reasons_follow_the_affect_level_and_skip_negligible_moves() -> None:
+def test_reasons_appear_only_when_the_level_is_raised() -> None:
     calm_low = NEUTRAL.model_copy(update={"positive_affect": 0, "arousal": 2})  # valence 3
     assert judge([calm_low] * 4).reasons == (
         "valence and arousal 1.4 SD from the norm towards the bottom left "
@@ -114,7 +110,7 @@ def test_affect_reasons_follow_the_affect_level_and_skip_negligible_moves() -> N
 def test_moves_in_the_safe_direction_never_count() -> None:
     report = judge([HAPPY] * 4)
     assert report.score == 0.0 and report.level == "normal" and report.reasons == ()
-    assert report.evidence == () and report.clinical is not None and report.clinical.total == 0
+    assert report.evidence == ()
 
 
 def test_levels_at_thresholds() -> None:
@@ -139,31 +135,16 @@ def test_config_from_env_and_validation() -> None:
 def test_learning_only_until_half_the_window_and_heavy_from_the_start_is_flagged() -> None:
     early = judge([SAD] * 4, DriftConfig())
     assert (early.level, early.note) == ("learning", "Collecting recent Shorts: 4/5 analysed")
-    assert early.score is not None and early.clinical is not None
-    assert judge([], DriftConfig()).clinical is None
+    assert early.score is not None and judge([], DriftConfig()).score is None
     assert judge([SAD] * 5, DriftConfig()).level == "warning"
 
 
-def test_overall_level_is_the_more_severe_of_affect_and_clinical() -> None:
-    sad = judge([SAD] * 4)
-    assert (sad.affect_level, sad.clinical_level, sad.level) == ("warning", "watch", "warning")
-    themed = judge([THEMED] * 4)
-    assert (themed.affect_level, themed.clinical_level, themed.level) == (
-        "normal", "warning", "warning")
-    assert themed.clinical is not None and themed.clinical.pattern == "major"
-    two = judge([NEUTRAL.model_copy(update={"a1_depressed_mood": 2, "a4_sleep": 2})] * 4)
-    assert (two.affect_level, two.clinical_level, two.level) == ("normal", "watch", "watch")
-    assert most_severe(["learning", "normal"]) == "normal"
-
-
-def test_reasons_name_the_clinical_exposure_then_affect() -> None:
+def test_reasons_and_note_of_a_warning() -> None:
     report = judge([SAD] * 4)
     assert report.reasons == (
-        "PHQ-9-style content exposure 6/27 (mild, pattern other): depressed mood nearly every "
-        "day, anhedonia nearly every day",
         "valence and arousal 4.8 SD from the norm towards the bottom left "
         "(valence 1.0 vs 3.03, arousal 1.0 vs 2.60, Warriner 2013)",)
-    assert report.note == "Heavy with depressive content"
+    assert report.note == "Low-mood drift"
 
 
 def test_timeline_judges_the_window_ending_at_every_short() -> None:
@@ -171,13 +152,11 @@ def test_timeline_judges_the_window_ending_at_every_short() -> None:
     timeline = report.timeline
     assert [p.seen_at for p in timeline] == [10.0 * i for i in range(8)]
     assert [p.level for p in timeline] == ["learning"] + ["normal"] * 4 + ["warning"] * 3
-    assert [p.exposure for p in timeline][-4:] == [2, 2, 4, 6]
     assert timeline[-1].score == pytest.approx(report.score)
 
 
-def test_evidence_ranks_central_themes_then_affect() -> None:
-    low = NEUTRAL.model_copy(update={"positive_affect": 0, "arousal": 2})  # valence 3, no themes
-    report = judge([NEUTRAL, low, SAD, THEMED])
-    assert [e.video_id for e in report.evidence] == [vid(3), vid(2), vid(1)]
-    assert report.evidence[0].central == ("A1", "A2", "A3", "A4", "A5")
-    assert report.evidence[1].central == ("A1", "A2") and report.evidence[2].risk > 0
+def test_evidence_ranks_shorts_by_their_own_drift() -> None:
+    low = NEUTRAL.model_copy(update={"positive_affect": 0, "arousal": 2})  # valence 3, arousal 2
+    report = judge([NEUTRAL, low, SAD, HAPPY])
+    assert [e.video_id for e in report.evidence] == [vid(2), vid(1)]
+    assert report.evidence[0].risk > report.evidence[1].risk > 0

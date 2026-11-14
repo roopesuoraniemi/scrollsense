@@ -21,11 +21,6 @@ class MemoryStore(AnalysisStore):
         self.__analyses[analysis.video_id] = analysis
 
 
-class FailingEmbedAnalyser(MockAnalyser):
-    def embed(self, package: TextPackage) -> tuple[float, ...]:
-        raise ConnectionError("embedding service down")
-
-
 def instant_mock() -> MockAnalyser:
     return MockAnalyser(delay_s=0)
 

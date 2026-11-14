@@ -27,9 +27,8 @@ from .test_views_api import NOW
 SETTINGS = NudgeSettings()
 POLICY = NudgePolicy(SETTINGS)
 VIEWER = ViewerId("patient-01")
-A9_DWELLING = SAD.model_copy(update={"a9_death_suicide": 1})
 # "video" is allowed: the card asks how the videos feel, without naming any content.
-CLINICAL_WORDS = ("depress", "diagnos", "drift", "warning", "a9", "suicid")
+CLINICAL_WORDS = ("depress", "diagnos", "drift", "warning", "suicid")
 
 
 def report(*recent: ClipScores) -> DriftReport:
@@ -49,7 +48,7 @@ def history(nudge: Nudge, choice: str | None) -> NudgeHistory:
 
 
 def point(level: str) -> TimelinePoint:
-    return TimelinePoint(video_id=vid(0), seen_at=0.0, score=0.0, exposure=0, level=level)
+    return TimelinePoint(video_id=vid(0), seen_at=0.0, score=0.0, level=level)
 
 
 def test_warning_streak_counts_only_judged_points() -> None:
@@ -88,12 +87,6 @@ def test_an_open_nudge_blocks_a_new_one_until_it_expires() -> None:
     policy = NudgePolicy(NudgeSettings(cooldown_s=0))
     assert policy.decide(report(SAD, SAD, SAD), pending, NOW + 899) is None
     assert policy.decide(report(SAD, SAD, SAD), pending, NOW + 900) is not None
-
-
-def test_a9_content_alone_issues_no_card_and_only_support_cards_exist() -> None:
-    assert POLICY.decide(report(A9_DWELLING), NudgeHistory(), NOW) is None
-    nudge = issued(POLICY, (SAD, SAD, A9_DWELLING), NOW)
-    assert nudge.card.kind == "support" and nudge.video_id is None
 
 
 def test_quiet_hours_hold_back_support_nudges() -> None:
@@ -173,7 +166,7 @@ def routers(tmp_path: Path) -> tuple[APIRouter, ...]:
     drift = ViewerDrift(FeedObserver(log, store), DriftDetector(SMALL, NORM))
     desk = NudgeDesk(JsonlNudgeLog(tmp_path / "views"), NudgeJudge(drift, POLICY), lambda: NOW)
     views = ViewsApi(ViewIntake(log, queue, ViewerExtras(desk)),
-                     ViewerReports(log, store, queue), lambda: NOW)
+                     ViewerReports(log, store, queue))
     return views.router(), NudgeApi(desk).router()
 
 
@@ -213,7 +206,7 @@ def test_answered_nudge_leaves_the_receipt_and_shows_in_history(client: TestClie
     [item] = client.get("/api/viewers/patient-01/nudges").json()
     assert item["state"] == "answered" and item["response"]["choice"] == "take_break"
     assert item["nudge"]["card"] == card and item["nudge"]["reason"].startswith("Drift warning")
-    assert "PHQ-9-style exposure" in item["nudge"]["reason"]
+    assert "SD into the bottom left" in item["nudge"]["reason"]
 
 
 def test_response_status_codes(client: TestClient) -> None:

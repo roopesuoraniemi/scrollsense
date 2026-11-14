@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ScrollSense logger
 // @namespace    scrollsense
-// @version      0.7
+// @version      0.9
 // @description  Sends the IDs of the YouTube Shorts you watch (and how long you stayed) to your own ScrollSense server, and shows its occasional check-in cards.
 // @match        https://m.youtube.com/*
 // @match        https://www.youtube.com/*
@@ -19,6 +19,8 @@
   let current = null;
   let buffer = GM_getValue('buffer', []);
   let showing = null;
+  let lastSent = 0;
+  const HEARTBEAT_MS = 10000;
 
   function setting(key, question) {
     let value = GM_getValue(key, '');
@@ -122,7 +124,6 @@
       padding: 13px 16px; border-radius: 14px; background: var(--btn); color: var(--btn-ink);
       font: inherit; font-weight: 600; text-align: center; cursor: pointer;
       display: flex; align-items: center; justify-content: center; line-height: 1.25; }
-    button.primary { background: var(--accent); color: var(--accent-ink); }
     button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 `;
 
@@ -160,11 +161,10 @@
     showing = null;
   }
 
-  function button(label, primary, onTap) {
+  function button(label, onTap) {
     const node = document.createElement('button');
     node.type = 'button';
     node.textContent = label;
-    if (primary) node.className = 'primary';
     node.addEventListener('click', onTap);
     return node;
   }
@@ -176,18 +176,10 @@
     title.textContent = card.title;
     // All options side by side, equal width and equal weight: no answer is pushed.
     const row = Object.assign(document.createElement('div'), { className: 'options' });
-    card.options.forEach((option) => row.appendChild(button(option.label, false, () => choose(card, option))));
+    card.options.forEach((option) => row.appendChild(button(option.label, () => choose(card, option))));
     box.append(title);
     if (card.message) box.append(Object.assign(document.createElement('p'), { textContent: card.message }));
     box.append(row);
-  }
-
-  function showText(text) {
-    const box = showing.box;
-    box.replaceChildren();
-    const body = document.createElement('p');
-    body.textContent = text;
-    box.append(body, button('OK', true, closeCard));
   }
 
   function report(card, choice, then = () => {}) {
@@ -217,34 +209,30 @@
     setTimeout(go, 1500);
   }
 
-  // Act inside the tap itself: a new tab or a dialler opened after the POST returns would no
-  // longer count as a user gesture and gets blocked. The token never goes into a URL.
   function choose(card, option) {
     remember(card.id);
-    if (option.action === 'leave') {
-      closeCard();
-      return leaveFeed(card, option);
-    }
-    report(card, option.choice);
-    if (option.action === 'open') window.open(`${config().endpoint}/${option.href}`, '_blank', 'noopener');
-    if (option.action === 'call') {
-      const link = document.createElement('a');
-      link.href = option.href;
-      link.click();
-    }
-    if (option.action === 'message') return showText(option.text);
     closeCard();
+    if (option.action === 'leave') return leaveFeed(card, option);
+    report(card, option.choice);
+  }
+
+  // An empty batch is a heartbeat: analyses finish after the swipe, so a card that becomes due
+  // while the viewer stays on one Short still arrives (in the receipt) within HEARTBEAT_MS.
+  function heartbeatDue() {
+    return !showing && !GM_getValue('paused', false) && document.visibilityState === 'visible'
+      && SHORT.test(location.pathname) && Date.now() - lastSent >= HEARTBEAT_MS;
   }
 
   function flush() {
-    if (!buffer.length) return;
+    if (!buffer.length && !heartbeatDue()) return;
     const { endpoint, token, viewer } = config();
     const sent = buffer.length;
+    lastSent = Date.now();
     GM_xmlhttpRequest({
       method: 'POST', url: `${endpoint}/api/views`, data: JSON.stringify({ viewer, events: buffer.slice(0, sent) }),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       onload: (response) => onSent(response, sent),
-      onerror: () => toast('ScrollSense: server unreachable'),
+      onerror: () => { if (sent) toast('ScrollSense: server unreachable'); },
     });
   }
 

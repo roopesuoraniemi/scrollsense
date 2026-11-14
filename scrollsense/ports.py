@@ -11,7 +11,7 @@ Progress = Callable[[Stage], None]
 
 
 class ContentAnalyser(ABC):
-    """Turns a video into a text package, scores it and embeds it.
+    """Turns a video into a text package and scores it.
 
     Implementations may call remote models: every method can block for seconds and raise.
     """
@@ -27,11 +27,7 @@ class ContentAnalyser(ABC):
 
     @abstractmethod
     def score(self, package: TextPackage) -> ClipScores:
-        """Score the package's mood and DSM-5 themes, already clamped to range."""
-
-    @abstractmethod
-    def embed(self, package: TextPackage) -> tuple[float, ...]:
-        """A semantic embedding of the package text."""
+        """Score the package's affect, already clamped to range."""
 
 
 class AnalysisStore(ABC):

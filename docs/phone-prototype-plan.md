@@ -1,5 +1,7 @@
 # Phone prototype: YouTube Shorts → ScrollSense (investigation, 14 Nov 2026)
 
+> **Status (14 Nov 2026, cleanup):** built as described in the README. Since this plan, the composition/readout endpoints, the baseline-vs-control readout, `JobBoard` and `/analyze`, the DSM-5 theme scores and the PHQ-9 yardstick were removed; drift is now affect-only against a global norm (`docs/clinical-calibration.md`). The sections below are the original investigation.
+
 **Verdict: yes, partly, this weekend.** The route is a browser userscript, not the YouTube app.
 - **Android:** Firefox (release) runs Violentmonkey from AMO. A userscript reads `/shorts/{id}` from `m.youtube.com` as you swipe and POSTs it through an HTTPS tunnel to a new `/api/views` endpoint.
 - **Same script elsewhere:** iOS Safari with the free "Userscripts" app, and Edge Android with Tampermonkey as a fallback.

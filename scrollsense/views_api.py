@@ -1,21 +1,17 @@
-"""HTTP adapter for the phone prototype: view batches in, feeds and readouts out."""
+"""HTTP adapter for the phone prototype: view batches in, feeds out."""
 from operator import attrgetter
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import Field
 
 from .analysis_queue import AnalysisQueue, QueueStatus
 from .api import ClipSummary
-from .domain import ClipAnalysis, VideoId
-from .feed import Composition, Readout, Shift, composition, readout
 from .intake import Receipt, ViewIntake
 from .ports import AnalysisStore, ViewLog
 from .schemas import Frozen
-from .views import EVER, ViewBatch, ViewerId, ViewEvent, Window
+from .views import EVER, ViewBatch, ViewerId, ViewEvent
 
 ClipState = Literal["scored", "queued", "failed", "pending"]
-DAY_S = 86_400.0
 
 
 class ViewerSummary(Frozen):
@@ -31,37 +27,6 @@ class FeedItem(Frozen):
     state: ClipState
     error: str | None
     clip: ClipSummary | None
-
-
-class Spans(Frozen):
-    current: Window
-    baseline: Window
-
-
-class ReadoutQuery(Frozen):
-    """Epoch-second bounds. Defaults: the last 24 h, against everything before it."""
-
-    from_: float | None = Field(default=None, alias="from")
-    to: float | None = None
-    baseline_from: float = 0.0
-    baseline_to: float | None = None
-    control: str | None = None
-
-    def spans(self, now: float) -> Spans:
-        """Raises ValueError if a window would end before it starts."""
-        end = self.to if self.to is not None else now
-        start = self.from_ if self.from_ is not None else end - DAY_S
-        baseline_end = self.baseline_to if self.baseline_to is not None else start
-        return Spans(current=Window(start=start, end=end),
-                     baseline=Window(start=self.baseline_from, end=baseline_end))
-
-
-class ReadoutView(Frozen):
-    windows: Spans
-    current: Composition
-    baseline: Composition
-    control: Shift | None
-    readout: Readout
 
 
 class ViewerReports:
@@ -80,14 +45,6 @@ class ViewerReports:
         events = sorted(self.__log.between(viewer, EVER), key=attrgetter("seen_at"), reverse=True)
         return tuple(self.__item(e) for e in events[:limit])
 
-    def readout(self, viewer: ViewerId, spans: Spans, control: ViewerId | None) -> ReadoutView:
-        """`viewer` over `spans`, compared with `control` over the same spans if given."""
-        shift = self.__shift(viewer, spans)
-        control_shift = self.__shift(control, spans) if control is not None else None
-        return ReadoutView(windows=spans, current=shift.current, baseline=shift.baseline,
-                           control=control_shift,
-                           readout=readout(shift.current, shift.baseline, control_shift))
-
     def queue_status(self) -> QueueStatus:
         return self.__queue.status()
 
@@ -100,39 +57,23 @@ class ViewerReports:
         analysis = self.__store.load(event.video)
         if analysis is not None:
             return FeedItem(event=event, state="scored", error=None,
-                            clip=ClipSummary.of(analysis, None))
+                            clip=ClipSummary.of(analysis))
         failure = self.__queue.failure(event.video)
         return FeedItem(event=event, state=self.__queue.state_of(event.video),
                         error=failure.error if failure else None, clip=None)
 
-    def __shift(self, viewer: ViewerId, spans: Spans) -> Shift:
-        return Shift(current=self.__composition(viewer, spans.current),
-                     baseline=self.__composition(viewer, spans.baseline))
-
-    def __composition(self, viewer: ViewerId, window: Window) -> Composition:
-        events = self.__log.between(viewer, window)
-        return composition(events, self.__analyses({e.video_id for e in events}), window)
-
-    def __analyses(self, video_ids: set[str]) -> dict[str, ClipAnalysis]:
-        loaded = (self.__store.load(VideoId(v)) for v in video_ids)
-        return {a.video_id: a for a in loaded if a is not None}
-
-
 class ViewsApi:
     """Routes under /api for the phone userscript and the dashboard."""
 
-    def __init__(self, intake: ViewIntake, reports: ViewerReports,
-                 clock: Callable[[], float]) -> None:
+    def __init__(self, intake: ViewIntake, reports: ViewerReports) -> None:
         self.__intake = intake
         self.__reports = reports
-        self.__clock = clock
 
     def router(self) -> APIRouter:
         router = APIRouter(prefix="/api")
         router.add_api_route("/views", self.post_views, methods=["POST"], status_code=202)
         router.add_api_route("/viewers", self.viewers, methods=["GET"])
         router.add_api_route("/viewers/{viewer}/feed", self.feed, methods=["GET"])
-        router.add_api_route("/viewers/{viewer}/readout", self.readout, methods=["GET"])
         router.add_api_route("/viewers/{viewer}", self.erase, methods=["DELETE"], status_code=204,
                              response_class=Response)
         router.add_api_route("/queue", self.queue, methods=["GET"])
@@ -150,14 +91,6 @@ class ViewsApi:
     def feed(self, viewer: str,
              limit: Annotated[int, Query(ge=1, le=500)] = 50) -> tuple[FeedItem, ...]:
         return self.__reports.feed(self.__viewer(viewer), limit)
-
-    def readout(self, viewer: str, query: Annotated[ReadoutQuery, Query()]) -> ReadoutView:
-        control = self.__viewer(query.control) if query.control else None
-        try:
-            spans = query.spans(self.__clock())
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        return self.__reports.readout(self.__viewer(viewer), spans, control)
 
     def erase(self, viewer: str) -> Response:
         """GDPR erasure of the view log. Shared clip analyses hold no viewer data and stay."""

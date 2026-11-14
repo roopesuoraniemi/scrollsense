@@ -1,7 +1,7 @@
 """Patient nudges as pure values and a pure policy.
 
 A *support* nudge asks "How do these videos feel right now?" and offers a break when a viewer's
-feed has stayed at drift level `warning` (affect or PHQ-9-style content exposure, see `drift`).
+feed has stayed at drift level `warning` (affect drift, see `drift`).
 It is the only patient-facing card: there are no crisis or suicide alerts, because the feed
 signal is not reliable enough for that kind of alert.
 Patient-facing text never names a diagnosis, a mood or any video's content; the clinician-facing `reason`
@@ -19,10 +19,9 @@ from .schemas import Frozen
 
 # Only "support" is issued; kept as a field for API stability (clients read `card.kind`).
 NudgeKind = Literal["support"]
-# open: `href` in a new tab, relative to the server; call: `href` is a tel: URI;
-# message: show `text`, then close; close: just close;
-# leave: pause the video and close the feed (the tab if allowed, else a blank page).
-Action = Literal["open", "call", "message", "close", "leave"]
+# close: just close the card; leave: pause the video and close the feed (the tab if allowed,
+# else a blank page).
+Action = Literal["close", "leave"]
 NudgeState = Literal["open", "answered", "expired"]
 OK_CHOICE = "ok"
 HOUR_S = 3_600
@@ -98,13 +97,11 @@ class NudgeSettings(Frozen):
 
 
 class NudgeOption(Frozen):
-    """One button. `choice` is what a tap records; see `Action` for `href` and `text`."""
+    """One button. `choice` is what a tap records; `action` is what the phone does."""
 
     choice: str
     label: str
     action: Action
-    href: str | None = None
-    text: str | None = None
 
 
 class NudgeCard(Frozen):
@@ -248,8 +245,7 @@ class NudgePolicy:
         return now - last.nudge.created_at >= self.__settings.cooldown_s * factor
 
     def __support(self, report: DriftReport, now: float) -> Nudge:
-        exposure = report.clinical.total if report.clinical else 0
         reason = (f"Drift warning on the last {self.__settings.streak} judged points "
-                  f"(affect score {report.score or 0.0:.2f}, PHQ-9-style exposure {exposure}/27)")
+                  f"({report.score or 0.0:.1f} SD into the bottom left)")
         return Nudge(viewer=report.viewer, created_at=now, reason=reason, video_id=None,
                      card=self.__settings.support_template().issue(now, self.__settings.expire_s))

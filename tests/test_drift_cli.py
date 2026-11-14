@@ -26,11 +26,10 @@ def test_bad_flags_exit_and_inconsistent_overrides_raise() -> None:
         parse_args(["patient-01", "--watch", "3"]).config(DriftConfig())
 
 
-def test_render_prints_both_yardsticks_items_and_timeline() -> None:
+def test_render_prints_verdict_reasons_and_timeline() -> None:
     text = render(judge([NEUTRAL] * 4 + [SAD] * 4))
-    assert text.startswith("patient-01: WARNING  affect warning (score 4.80 SD")
-    assert "clinical watch  (window 4)" in text.splitlines()[0]
+    assert text.startswith("patient-01: WARNING  (score 4.80 SD into the bottom left")
+    assert "window 4)" in text.splitlines()[0]
     assert "not a diagnosis." in text and "4.8 SD from the norm towards the bottom left" in text
-    assert "6/27 mild, pattern other" in text and "  A1 Depressed mood" in text
-    assert "nearly every day" in text and "Warriner, Kuperman & Brysbaert (2013)" in text
-    assert text.count(" warning") == 4 and "PHQ  6  warning" in text
+    assert "Warriner, Kuperman & Brysbaert (2013)" in text
+    assert text.count(" warning") == 3 and "PHQ" not in text

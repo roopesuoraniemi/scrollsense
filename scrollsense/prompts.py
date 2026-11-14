@@ -1,5 +1,5 @@
 """Prompt text for the describing and scoring stages. Pure: no model calls here."""
-from .schemas import CRITERIA, TextPackage
+from .schemas import TextPackage
 
 # Why no inferring a real person's feelings, health or mental state: that would be
 # emotion recognition of creators, who can't be informed or consent (EU AI Act
@@ -37,47 +37,36 @@ __EXAMPLES = """1. Format: talking_to_camera. Transcript: "Depression isn't just
    sleeping all day, losing interest in things you loved, feeling like a burden."
    Intended meaning: calm psychoeducation that depression has many faces.
    Emotional cues: soft piano, slow pacing, muted colours.
-   -> negative 2, positive 1 (valence 2), arousal 2, neutral_or_informational,
-      A1 2, A2 1, A4 1, A7 1, A9 0, hopeful false. The calm delivery does not make it neutral:
-      the viewer is asked to sit with heavy material.
+   -> negative 2, positive 1 (valence 2), arousal 2, neutral_or_informational, hopeful false.
+      The calm delivery does not make it neutral: the viewer is asked to sit with heavy material.
 2. Format: meme. On-screen text: "me at 3am replaying something I said in 2016 🙂 kms".
    Intended meaning: ironic, relatable joke about shame and sleeplessness.
    Emotional cues: slowed-down sad song, dark bedroom, forced-smile emoji.
-   -> negative 2, positive 1 (valence 2), arousal 1, dwelling_or_romanticising,
-      A1 1, A4 1, A7 2, A9 1, hopeful false. Bleak humour is still heavy; "kms" counts as A9.
+   -> negative 2, positive 1 (valence 2), arousal 1, dwelling_or_romanticising, hopeful false.
+      Bleak humour is still heavy.
 3. Format: broll_with_text. On-screen text: "Day 90 of therapy: made my bed, went for a walk,
    called my sister. Small wins count."
    Intended meaning: recovery is slow but real.
    Emotional cues: warm acoustic guitar, morning sunlight.
-   -> negative 1, positive 2 (valence 4), arousal 2, coping_or_recovery,
-      A1 1, A6 1, hopeful true.
+   -> negative 1, positive 2 (valence 4), arousal 2, coping_or_recovery, hopeful true.
 4. Format: tutorial. Transcript: "To reset your router, hold this button for ten seconds."
    Intended meaning: a practical how-to.
    Emotional cues: no music, plain lighting, even pace.
-   -> negative 0, positive 0 (valence 3), arousal 2, unrelated, all themes 0, hopeful false.
+   -> negative 0, positive 0 (valence 3), arousal 2, unrelated, hopeful false.
 5. Format: animals_nature. On-screen text: "best friends 🥹". A puppy and a kitten play.
    Intended meaning: wholesome, cute.
    Emotional cues: bouncy ukulele, bright colours, heart emoji.
-   -> negative 0, positive 3 (valence 5), arousal 3, unrelated, all themes 0, hopeful true.
+   -> negative 0, positive 3 (valence 5), arousal 3, unrelated, hopeful true.
 6. Format: talking_to_camera. Transcript: "If you're thinking about ending your life, you're
    not alone. Call or text 988, any time."
    Intended meaning: suicide-prevention message pointing to a help line.
    Emotional cues: gentle piano, steady eye-level shot, warm light.
-   -> negative 2, positive 2 (valence 3), arousal 1, coping_or_recovery,
-      A1 1, A9 2, hopeful true."""
+   -> negative 2, positive 2 (valence 3), arousal 1, coping_or_recovery, hopeful true."""
 
-__SCORE_TEMPLATE = """You score the THEMES of a short video from its text description.
+__SCORE_TEMPLATE = """You score the AFFECT of a short video from its text description.
 You are not assessing any person, only what the content communicates to a viewer.
 Use the intended meaning and emotional cues as well as the literal words: irony and memes
 often say the opposite of their surface.
-
-DSM-5 criteria for a major depressive episode, used here as content themes:
-{criteria}
-
-Theme scores: 0 absent, 1 mentioned in passing, 2 a central theme, 3 intense or glorified.
-Count euphemisms and jokes too: "unalive", "kms" or "not wanting to be here" in a meme is A9.
-Suicide-prevention or help-line content mentioning suicide still gets an A9 score, with stance
-coping_or_recovery.
 
 Stance:
 - dwelling_or_romanticising: lingers in, validates or aestheticises the feeling without a way forward
@@ -110,7 +99,7 @@ TEXT PACKAGE:
 
 
 def package_text(package: TextPackage) -> str:
-    """The package as plain text, the form both scoring and embedding read."""
+    """The package as plain text, the form scoring reads."""
     return (f"Title: {package.title}\nFormat: {package.format}\n"
             f"Main message: {package.main_message}\nIntended meaning: {package.intended_meaning}\n"
             f"Emotional cues: {package.emotional_cues}\nTranscript: {package.transcript}\n"
@@ -120,6 +109,5 @@ def package_text(package: TextPackage) -> str:
 
 def scoring_prompt(package: TextPackage) -> str:
     """The stage-2 prompt for `package`."""
-    criteria = "\n".join(f"- {c.code} {c.label}: {c.theme}" for c in CRITERIA)
-    return __SCORE_TEMPLATE.format(criteria=criteria, examples=__EXAMPLES,
+    return __SCORE_TEMPLATE.format(examples=__EXAMPLES,
                                    package=package_text(package))

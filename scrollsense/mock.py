@@ -4,12 +4,12 @@ import time
 
 from .domain import AnalyserLabel, VideoId
 from .ports import ContentAnalyser
-from .schemas import A9_CRITERION, CRITERIA, STANCES, ClipScores, TextPackage
+from .schemas import STANCES, ClipScores, TextPackage
 
 
 class MockAnalyser(ContentAnalyser):
     """Deterministic placeholder output: text is marked [MOCK], scores are pseudo-random
-    per video and never score the A9 theme. Each call sleeps `delay_s` so the
+    per video. Each call sleeps `delay_s` so the
     UI's progress stages are visible.
     """
 
@@ -18,7 +18,7 @@ class MockAnalyser(ContentAnalyser):
 
     @property
     def label(self) -> AnalyserLabel:
-        return AnalyserLabel(name="mock", embed_name="mock", mock=True)
+        return AnalyserLabel(name="mock", mock=True)
 
     def describe(self, video: VideoId) -> TextPackage:
         time.sleep(self.__delay_s)
@@ -34,16 +34,12 @@ class MockAnalyser(ContentAnalyser):
     def score(self, package: TextPackage) -> ClipScores:
         time.sleep(self.__delay_s)
         seed = package.title
-        themes = {c.key: self.__digit(seed, c.key) % 4 for c in CRITERIA if c != A9_CRITERION}
         return ClipScores(
             rationale="[MOCK] random scores, not an analysis", evidence="[MOCK] no evidence",
             negative_affect=self.__digit(seed, "n") % 4, positive_affect=self.__digit(seed, "p") % 4,
             arousal=1 + self.__digit(seed, "a") % 5,
             stance=STANCES[self.__digit(seed, "s") % len(STANCES)],  # type: ignore[arg-type]
-            hopeful=bool(self.__digit(seed, "h") % 2), a9_death_suicide=0, **themes)
-
-    def embed(self, package: TextPackage) -> tuple[float, ...]:
-        return tuple(((self.__digit(package.title, f"e{i}") % 2000) - 1000) / 1000 for i in range(32))
+            hopeful=bool(self.__digit(seed, "h") % 2))
 
     @staticmethod
     def __digit(seed: str, salt: str) -> int:

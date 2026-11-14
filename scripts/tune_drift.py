@@ -1,12 +1,11 @@
-"""Tune and evaluate the globally calibrated drift detector on simulated feeds of real Shorts.
+"""Evaluate the affect drift detector on simulated feeds of real Shorts.
 
 Replays random sequences of the 50 analysed test Shorts in data/sim/clips (labels in
-scripts/test_shorts.json) through `DriftDetector.judge`, and reports affect-only,
-clinical-only (PHQ-9-style, fixed cutoffs) and combined levels per scenario. Only the affect
-watch/warn thresholds are tuned; see docs/clinical-calibration.md for the results.
+scripts/test_shorts.json) through `DriftDetector.judge`, and reports how often and how fast
+each scenario reaches watch and warning; see docs/clinical-calibration.md for the results.
 
 Setup:  SCROLLSENSE_DATA=data/sim uv run python -m scrollsense $(python3 -c "import json;d=json.load(open('scripts/test_shorts.json'));print(*[x['id'] for x in d['heavy'][:25]+d['light'][:25]])")
-Run:    PYTHONPATH=. uv run python scripts/tune_drift.py [--sessions 300] [--window 14]
+Run:    PYTHONPATH=. uv run python scripts/tune_drift.py [--sessions 300] [--window 10 14]
 """
 import argparse
 import itertools
@@ -20,7 +19,7 @@ from typing import Callable, Iterable, Sequence
 from scrollsense.affect_norms import load_affect_norms
 from scrollsense.domain import ClipAnalysis
 from scrollsense.drift.core import DriftConfig, DriftDetector
-from scrollsense.drift.levels import SEVERITY, Level, most_severe
+from scrollsense.drift.levels import SEVERITY, Level
 from scrollsense.drift.observe import Group, Observation
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -34,7 +33,6 @@ BASE_HEAVY = 0.15
 LEAD_IN = 20      # Shorts of the usual feed before a drift starts
 DRIFT_LEN = 20    # Shorts after the drift starts (or from the start, for heavy-from-start)
 STEADY_LEN = 45   # same length as the old 20-Short baseline + 25 recent Shorts
-MODES = ("affect", "clinical", "combined")
 NEVER = 99
 WATCH_GRID = (1.0, 1.25, 1.5)
 WARN_GRID = (1.0, 1.25, 1.5, 2.0)
@@ -42,11 +40,10 @@ WARN_GRID = (1.0, 1.25, 1.5, 2.0)
 
 @dataclass(frozen=True)
 class Point:
-    """One judged prefix: the affect score and the (threshold-free) clinical level."""
+    """One judged prefix: whether it is past learning, and its affect score."""
 
     judged: bool
     score: float
-    clinical: Level
 
 
 @dataclass(frozen=True)
@@ -65,8 +62,8 @@ def replay(ids: Sequence[str], start: int, window: int) -> Session:
     detector = DriftDetector(DriftConfig(window=window), NORM)
     shown = Group(observations(ids))
     judged = [detector.judge(shown.upto(end).last(window)) for end in range(1, len(ids) + 1)]
-    return Session(points=tuple(Point(judged=j.clinical_level != "learning", score=j.score or 0.0,
-                                      clinical=j.clinical_level) for j in judged), start=start)
+    return Session(points=tuple(Point(judged=j.level != "learning", score=j.score or 0.0)
+                                for j in judged), start=start)
 
 
 def mixed(p_heavy: float, n: int, rng: random.Random) -> list[str]:
@@ -90,14 +87,9 @@ def sessions(name: str, n: int, window: int) -> list[Session]:
     return [replay(*SCENARIOS[name](rng), window=window) for _ in range(n)]
 
 
-def levels(session: Session, config: DriftConfig, mode: str) -> list[Level]:
-    def one(p: Point) -> Level:
-        if not p.judged:
-            return "learning"
-        affect = config.level_of(p.score)
-        return {"affect": affect, "clinical": p.clinical,
-                "combined": most_severe((affect, p.clinical))}[mode]
-    return [one(p) for p in session.points[session.start:]]
+def levels(session: Session, config: DriftConfig) -> list[Level]:
+    return [config.level_of(p.score) if p.judged else "learning"
+            for p in session.points[session.start:]]
 
 
 def first(found: Iterable[Level], level: Level) -> int:
@@ -120,16 +112,16 @@ class Outcome:
                 f"{shorts(self.to_warning):>5}")
 
 
-def outcome(group: Sequence[Session], config: DriftConfig, mode: str) -> Outcome:
-    watch = [first(levels(s, config, mode), "watch") for s in group]
-    warn = [first(levels(s, config, mode), "warning") for s in group]
+def outcome(group: Sequence[Session], config: DriftConfig) -> Outcome:
+    watch = [first(levels(s, config), "watch") for s in group]
+    warn = [first(levels(s, config), "warning") for s in group]
     return Outcome(watch=sum(w < NEVER for w in watch) / len(group),
                    warning=sum(w < NEVER for w in warn) / len(group),
                    to_watch=statistics.median(watch), to_warning=statistics.median(warn))
 
 
 def grid(simulated: dict[str, list[Session]], window: int) -> None:
-    print(f"\n== affect threshold grid, window {window} (affect-only; clinical is fixed)")
+    print(f"\n== threshold grid, window {window}")
     print("watch  warn | steady15 FP watch/warn | steady0 FP | steady30 watch/warn | "
           "full: warned, median | "
           "partial warned | start warned")
@@ -137,7 +129,7 @@ def grid(simulated: dict[str, list[Session]], window: int) -> None:
         if watch > warn:
             continue
         config = DriftConfig(window=window, watch=watch, warn=warn)
-        o = {name: outcome(group, config, "affect") for name, group in simulated.items()}
+        o = {name: outcome(group, config) for name, group in simulated.items()}
         print(f"{watch:5} {warn:5} | {o['steady 15% heavy'].watch:5.0%} "
               f"{o['steady 15% heavy'].warning:5.0%} | {o['steady 0% heavy'].warning:5.0%} | "
               f"{o['steady 30% heavy'].watch:5.0%} {o['steady 30% heavy'].warning:5.0%} | "
@@ -146,11 +138,10 @@ def grid(simulated: dict[str, list[Session]], window: int) -> None:
 
 
 def table(simulated: dict[str, list[Session]], config: DriftConfig) -> None:
-    print(f"\n== window {config.window}, affect watch {config.watch} warn {config.warn}")
-    print(f"{'scenario':<22} {'mode':<9} watch  warn  →watch →warn")
+    print(f"\n== window {config.window}, watch {config.watch} warn {config.warn}")
+    print(f"{'scenario':<22} watch  warn  →watch →warn")
     for name, group in simulated.items():
-        for mode in MODES:
-            print(f"{name:<22} {mode:<9} {outcome(group, config, mode).row()}")
+        print(f"{name:<22} {outcome(group, config).row()}")
 
 
 def main() -> None:

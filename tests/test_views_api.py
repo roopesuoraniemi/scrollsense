@@ -25,7 +25,7 @@ def app(tmp_path: Path, token: str | None) -> FastAPI:
     queue = AnalysisQueue(AnalysisService(instant_mock(), store, time.time), store,
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
-    api = ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())), ViewerReports(log, store, queue), lambda: NOW)
+    api = ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())), ViewerReports(log, store, queue))
     built = FastAPI()
     built.include_router(api.router(), dependencies=[Depends(BearerToken(token))] if token else [])
     return built
@@ -72,22 +72,18 @@ def test_non_shorts_events_are_logged_not_queued(client: TestClient) -> None:
     assert client.get("/api/viewers/patient-01/feed").json()[0]["state"] == "pending"
 
 
-def test_viewers_readout_and_queue(client: TestClient) -> None:
+def test_viewers_and_queue(client: TestClient) -> None:
     client.post("/api/views", json=batch("patient-01", "aaaaaaaaaaa"))
     client.post("/api/views", json=batch("control-01", "bbbbbbbbbbb"))
     wait_scored(client, "patient-01")
     viewers = client.get("/api/viewers").json()
     assert [(v["viewer"], v["events"]) for v in viewers] == [("control-01", 1), ("patient-01", 1)]
-    body = client.get("/api/viewers/patient-01/readout?control=control-01").json()
-    assert body["current"]["n_shown"] == 1 and body["baseline"]["n_shown"] == 0
-    assert body["control"]["current"]["n_shown"] == 1 and "clusters" in body["readout"]
     assert client.get("/api/queue").json()["depth"] >= 0
 
 
-def test_bad_viewer_and_window_are_400(client: TestClient) -> None:
+def test_bad_viewer_is_400(client: TestClient) -> None:
     assert client.post("/api/views", json={"viewer": "Bob", "events": []}).status_code == 400
     assert client.get("/api/viewers/Bob/feed").status_code == 400
-    assert client.get("/api/viewers/patient-01/readout?from=10&to=5").status_code == 400
 
 
 def test_erase_deletes_the_log(client: TestClient) -> None:

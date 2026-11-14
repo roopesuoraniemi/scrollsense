@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from .domain import AnalyserLabel, VideoId
 from .ports import ContentAnalyser
-from .prompts import DESCRIBE_PROMPT, PARAPHRASE_PROMPT, package_text, scoring_prompt
+from .prompts import DESCRIBE_PROMPT, PARAPHRASE_PROMPT, scoring_prompt
 from .schemas import ClipScores, TextPackage
 
 Parsed = TypeVar("Parsed", bound=BaseModel)
@@ -22,7 +22,6 @@ class GenerationBlocked(RuntimeError):
 @dataclass(frozen=True)
 class GeminiConfig:
     model: str
-    embed_model: str
 
 
 class GeminiAnalyser(ContentAnalyser):
@@ -41,8 +40,7 @@ class GeminiAnalyser(ContentAnalyser):
 
     @property
     def label(self) -> AnalyserLabel:
-        return AnalyserLabel(name=self.__config.model, embed_name=self.__config.embed_model,
-                             mock=False)
+        return AnalyserLabel(name=self.__config.model, mock=False)
 
     def describe(self, video: VideoId) -> TextPackage:
         try:
@@ -63,12 +61,6 @@ class GeminiAnalyser(ContentAnalyser):
             types.Part(file_data=types.FileData(file_uri=video.watch_url)),
             types.Part(text=prompt),
         ])
-
-    def embed(self, package: TextPackage) -> tuple[float, ...]:
-        response = self.__client.models.embed_content(
-            model=self.__config.embed_model, contents=package_text(package),
-            config=types.EmbedContentConfig(task_type="CLUSTERING"))
-        return tuple((response.embeddings or [])[0].values or ())
 
     def __generate(self, contents: types.ContentListUnion, schema: type[Parsed]) -> Parsed:
         config = types.GenerateContentConfig(response_mime_type="application/json",

@@ -70,8 +70,7 @@ class Settings:
         folder (default `root/data`). Raises ValueError on a malformed drift or nudge setting."""
         load_dotenv(root / ".env")
         mock = os.getenv("SCROLLSENSE_MOCK") == "1"
-        gemini = GeminiConfig(model=os.getenv("GEMINI_MODEL", "gemini-4-hydrogen"),
-                              embed_model=os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-2"))
+        gemini = GeminiConfig(model=os.getenv("GEMINI_MODEL", "gemini-4-hydrogen"))
         data = Path(os.getenv("SCROLLSENSE_DATA") or root / "data")
         dirs = DataDirs.under(data, mock)
         return cls(mock=mock, gemini=gemini, data_dir=dirs.clips, views_dir=dirs.views,

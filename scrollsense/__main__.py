@@ -30,8 +30,7 @@ def __report(video: VideoId, stage: Stage) -> None:
 def __summary(analysis: ClipAnalysis) -> str:
     s = analysis.scores
     return (f"  -> {analysis.package.title} | valence {s.valence} (neg {s.negative_affect} "
-            f"pos {s.positive_affect}) arousal {s.arousal} "
-            f"| theme load {s.theme_load}/27 A9 {s.a9_death_suicide} | {s.stance}")
+            f"pos {s.positive_affect}) arousal {s.arousal} | {s.stance}")
 
 
 if __name__ == "__main__":

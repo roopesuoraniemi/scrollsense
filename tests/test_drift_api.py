@@ -31,7 +31,7 @@ def routers(tmp_path: Path) -> list[APIRouter]:
     queue.start(2)
     drift = ViewerDrift(FeedObserver(log, store), DriftDetector(CONFIG, NORM))
     return [ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())),
-                     ViewerReports(log, store, queue), lambda: NOW).router(),
+                     ViewerReports(log, store, queue)).router(),
             DriftApi(drift).router()]
 
 
@@ -54,28 +54,23 @@ def test_drift_report_shape_while_learning(client: TestClient) -> None:
     assert body["level"] == "learning" and body["note"] == "Collecting recent Shorts: 1/2 analysed"
     assert body["config"] == CONFIG.model_dump() and body["pending"] == 0
     assert body["affect_baseline"] == NORM.model_dump() and "baseline" not in body
-    assert body["clinical"]["window_n"] == 1 and len(body["timeline"]) == 1
+    assert len(body["timeline"]) == 1 and "clinical" not in body
     assert "safety" not in body
 
 
-def test_judged_report_carries_both_yardsticks(client: TestClient) -> None:
+def test_judged_report_has_a_level(client: TestClient) -> None:
     client.post("/api/views", json=batch("patient-01", *VIDEOS))
     wait_scored(client, "patient-01")
     body = client.get("/api/viewers/patient-01/drift").json()
     assert body["level"] in {"normal", "watch", "warning"} and len(body["timeline"]) == 6
-    assert {body["affect_level"], body["clinical_level"]} <= {"normal", "watch", "warning"}
-    clinical = body["clinical"]
-    assert set(clinical) == {"window_n", "items", "total", "band", "pattern", "reference"}
-    assert clinical["window_n"] == 4 and [i["code"] for i in clinical["items"]][0] == "A1"
-    assert set(clinical["items"][0]) == {"code", "label", "present", "share", "score",
-                                         "frequency_label"}
+    assert body["recent"]["n"] == 4
 
 
 def test_timeline_and_affect_rows_shape(client: TestClient) -> None:
     client.post("/api/views", json=batch("patient-01", *VIDEOS))
     wait_scored(client, "patient-01")
     body = client.get("/api/viewers/patient-01/drift").json()
-    assert set(body["timeline"][0]) == {"video_id", "seen_at", "score", "exposure", "level"}
+    assert set(body["timeline"][0]) == {"video_id", "seen_at", "score", "level"}
     assert [f["name"] for f in body["features"]] == ["valence", "arousal"]
 
 
