@@ -1,17 +1,14 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const state = { meta: null, clips: [], current: null, view: initialView() };
+const state = { meta: null, viewer: null, feed: [], clips: [], current: null, follow: true, signature: '', view: initialView() };
+const POLL_MS = 2000;
 
 const STANCE = {
   dwelling_or_romanticising: 'Dwelling / romanticising',
   neutral_or_informational: 'Neutral / informational',
   coping_or_recovery: 'Coping / recovery',
   unrelated: 'Unrelated',
-};
-const STAGE = {
-  queued: 'Queued…', cached: 'Loaded from cache', describing: 'Watching the video…',
-  scoring: 'Scoring DSM-5 themes…', embedding: 'Embedding the text package…', done: 'Done',
 };
 const GEO = { W: 360, H: 330, L: 40, T: 14, PW: 308, PH: 280 };
 const swatch = (c) => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};vertical-align:-1px"></span>`;
@@ -57,31 +54,96 @@ function setStatus(text, isError = false) {
   $('status').className = isError ? 'err' : '';
 }
 
-// ---------------------------------------------------------------- loading
+// ---------------------------------------------------------------- live feed of one viewer
 
 async function init() {
   state.meta = await api('/api/meta');
   renderMode();
   renderToggle();
+  await loadViewers();
+  await tick();
+  setInterval(() => tick().catch((error) => setStatus(error.message, true)), POLL_MS);
+}
+
+function storedViewer() {
+  const fromUrl = new URLSearchParams(location.search).get('viewer');
+  try { return fromUrl || localStorage.getItem('scrollsense.viewer'); } catch { return fromUrl; }
+}
+
+async function loadViewers() {
+  const viewers = await api('/api/viewers');
+  const names = viewers.map((v) => v.viewer);
+  const newest = [...viewers].sort((a, b) => (b.last_seen ?? 0) - (a.last_seen ?? 0))[0];
+  state.viewer = names.includes(storedViewer()) ? storedViewer() : newest?.viewer ?? null;
+  $('viewer').innerHTML = viewers.map((v) => `<option value="${esc(v.viewer)}" ${v.viewer === state.viewer ? 'selected' : ''}>${esc(v.viewer)} (${v.events})</option>`).join('');
+  if (!state.viewer) setStatus('No viewers yet: scroll Shorts on the phone with the userscript.');
+}
+
+function changeViewer(viewer) {
+  state.viewer = viewer;
+  try { localStorage.setItem('scrollsense.viewer', viewer); } catch { /* per-viewer convenience only */ }
+  Object.assign(state, { feed: [], clips: [], current: null, signature: '' });
+  setFollow(true);
+}
+
+async function tick() {
+  if (!state.viewer) return loadViewers();
+  const feed = await api(`/api/viewers/${state.viewer}/feed?limit=100`);
+  const signature = feed.map((item) => item.event.event_id + item.state).join('|');
+  if (signature === state.signature) return;
+  state.signature = signature;
+  state.feed = feed;
   await refreshClips();
-  const id = location.hash.slice(1) || state.clips.at(-1)?.id;
-  if (id) await select(id);
+  await followOrRefresh();
+}
+
+function feedVideos() {
+  const seen = new Set();
+  return state.feed.filter((item) => !seen.has(item.event.video_id) && seen.add(item.event.video_id));
 }
 
 async function refreshClips() {
-  state.clips = await api('/api/clips');
+  const videos = feedVideos();
+  const scored = new Set(videos.filter((item) => item.state === 'scored').map((item) => item.event.video_id));
+  state.clips = (await api('/api/clips')).filter((clip) => scored.has(clip.id));
+  const waiting = videos.filter((item) => item.state === 'queued').length;
+  setStatus(`${videos.length} Shorts from ${state.viewer} · ${scored.size} analysed · ${waiting} in queue`);
   renderList();
   renderMap();
 }
 
-async function select(id) {
-  try { state.current = await api(`/api/clips/${id}`); } catch { return; }
-  location.hash = id;
+async function followOrRefresh() {
+  const newest = state.feed[0]?.event.video_id;
+  if (state.follow && newest && newest !== state.current?.id) return select(newest, false);
+  if (state.current && !state.current.scores) return select(state.current.id, false);
+}
+
+function setFollow(on) {
+  state.follow = on;
+  $('follow').checked = on;
+  if (on) state.signature = '';
+}
+
+async function select(id, manual = true) {
+  if (manual) setFollow(false);
+  if (id !== state.current?.id) {
+    state.current = { id };
+    renderVideo();
+  }
+  try {
+    state.current = await api(`/api/clips/${id}`);
+    renderPackage();
+    renderScores();
+  } catch { renderPending(id); }
   renderList();
-  renderVideo();
-  renderPackage();
   renderMap();
-  renderScores();
+}
+
+function renderPending(id) {
+  const item = state.feed.find((entry) => entry.event.video_id === id);
+  const text = item?.state === 'failed' ? `Analysis failed: ${item.error}` : 'Queued: Gemini is watching this Short…';
+  $('pkg').innerHTML = `<div class="empty">${esc(text)}</div>`;
+  $('dsm').innerHTML = `<div class="empty">${esc(text)}</div>`;
 }
 
 // ---------------------------------------------------------------- header and list
@@ -92,19 +154,25 @@ function renderMode() {
   $('mode').classList.toggle('mock', analyser.mock);
 }
 
+function listButton(item) {
+  const id = item.event.video_id;
+  const label = item.clip ? item.clip.title : `${item.state === 'failed' ? '✗' : '⏳'} ${id}`;
+  const dwell = item.event.dwell_s != null ? ` · ${Math.round(item.event.dwell_s)}s` : '';
+  return `<button type="button" data-id="${id}" class="${state.current?.id === id ? 'on' : ''} ${item.state}" title="${esc(label)}">${esc(label)}${dwell}</button>`;
+}
+
 function renderList() {
-  const isCurrent = (c) => state.current?.id === c.id;
-  $('list').innerHTML = state.clips.map((c) =>
-    `<button type="button" data-id="${c.id}" class="${isCurrent(c) ? 'on' : ''}" title="${esc(c.title)}">${esc(c.title)}</button>`).join('');
+  $('list').innerHTML = feedVideos().map(listButton).join('');
   [...$('list').children].forEach((b) => { b.onclick = () => select(b.dataset.id); });
 }
 
 // ---------------------------------------------------------------- panels 1 and 2
 
 function renderVideo() {
-  const { id, url } = state.current;
-  $('video').innerHTML = `<div class="video"><iframe src="https://www.youtube.com/embed/${id}?rel=0&playsinline=1" title="Original video" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
-    <p class="note"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></p>`;
+  const { id } = state.current;
+  const url = `https://www.youtube.com/shorts/${id}`;
+  $('video').innerHTML = `<div class="video"><iframe src="https://www.youtube.com/embed/${id}?rel=0&playsinline=1&autoplay=1&mute=1&loop=1&playlist=${id}" title="Original video" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
+    <p class="note"><a href="${url}" target="_blank" rel="noopener">${url}</a></p>`;
 }
 
 function packageField(key, label, cls = '') {
@@ -180,7 +248,7 @@ function semanticLayer() {
   const points = state.clips.filter((c) => c.semantic).map((clip) => ({
     clip, x: GEO.L + GEO.PW / 2 + clip.semantic.x * GEO.PW * 0.43, y: GEO.T + GEO.PH / 2 - clip.semantic.y * GEO.PH * 0.43,
   }));
-  const empty = points.length < 2 ? `<text x="${GEO.L + GEO.PW / 2}" y="${GEO.T + GEO.PH / 2}" text-anchor="middle">Analyse at least 2 clips to see the semantic map</text>` : '';
+  const empty = points.length < 2 ? `<text x="${GEO.L + GEO.PW / 2}" y="${GEO.T + GEO.PH / 2}" text-anchor="middle">Needs at least 2 analysed Shorts</text>` : '';
   return {
     axes: axisTitles('Principal component 1', 'Principal component 2') + empty,
     points,
@@ -245,31 +313,10 @@ function renderScores() {
     <p class="note">0 absent · 1 mentioned · 2 central · 3 intense or glorified. These scores describe the <i>content's</i> themes, not any person, and are not a diagnosis.</p>`;
 }
 
-// ---------------------------------------------------------------- analysing
+// ---------------------------------------------------------------- wiring
 
-async function onSubmit(event) {
-  event.preventDefault();
-  const url = $('url').value.trim();
-  if (!url) return setStatus('Paste a YouTube URL first.', true);
-  try {
-    const job = await api('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, force: $('force').checked }) });
-    setStatus(STAGE.queued);
-    poll(job.job);
-  } catch (error) { setStatus(error.message, true); }
-}
-
-async function poll(jobId) {
-  const status = await api(`/api/jobs/${jobId}`);
-  if (status.stage === 'error') return setStatus(status.error, true);
-  setStatus(STAGE[status.stage] || status.stage);
-  if (status.stage !== 'done') return setTimeout(() => poll(jobId), 800);
-  await refreshClips();
-  await select(status.id);
-  $('url').value = '';
-}
-
-$('f').onsubmit = onSubmit;
-$('url').oninput = () => setStatus($('status').textContent);
+$('viewer').onchange = (event) => changeViewer(event.target.value);
+$('follow').onchange = (event) => setFollow(event.target.checked);
 $('tAff').onclick = () => setView('aff');
 $('tSem').onclick = () => setView('sem');
 init().catch((error) => { console.error(error); setStatus(`Server not reachable: ${error.message}`, true); });

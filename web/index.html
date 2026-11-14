@@ -24,6 +24,9 @@ button.on{border-color:var(--acc);color:var(--acc)}
 #status{font-size:13px;color:var(--mut)}
 #status.err{color:var(--danger)}
 #list{display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 8px}
+select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
+#list button.queued,#list button.pending{border-style:dashed;color:var(--mut)}
+#list button.failed{color:var(--danger)}
 #list button{font-size:12px;padding:4px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 main{display:grid;grid-template-columns:minmax(260px,330px) minmax(0,1fr) minmax(0,1fr);gap:16px;padding:8px 20px 28px}
 @media (max-width:1100px){main{grid-template-columns:minmax(260px,330px) minmax(0,1fr)}#col3{grid-column:1/-1}}
@@ -54,18 +57,17 @@ blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);bac
 <body>
 <header>
   <h1>ScrollSense</h1><span class="badge" id="mode">…</span>
-  <span style="font-size:13px;color:var(--mut)">Proof of concept: video → text package → embedded space → DSM-5 themes. Not a diagnostic tool.</span>
+  <span style="font-size:13px;color:var(--mut)">Live: the Shorts scrolled on the phone → text package → embedded space → DSM-5 themes. Not a diagnostic tool.</span>
 </header>
-<form id="f">
-  <input type="text" id="url" placeholder="https://www.youtube.com/shorts/…" autocomplete="off" aria-label="YouTube or Shorts URL">
-  <button class="primary" type="submit">Analyse</button>
-  <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="force"> Re-run (ignore cache)</label>
+<form id="f" onsubmit="return false">
+  <label style="font-size:13px;color:var(--mut)">Viewer <select id="viewer" aria-label="Viewer"></select></label>
+  <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="follow" checked> Follow live</label>
   <span id="status" role="status"></span>
 </form>
 <div id="list" aria-label="Analysed clips"></div>
 <main>
   <section>
-    <div class="card"><h2><span class="step">1</span>Original video</h2><div id="video"><div class="empty">Paste a public YouTube Shorts URL to start.</div></div></div>
+    <div class="card"><h2><span class="step">1</span>Original video</h2><div id="video"><div class="empty">Scroll Shorts on the phone: they appear here live.</div></div></div>
   </section>
   <section>
     <div class="card"><h2><span class="step">2</span>Generated text package</h2><div id="pkg"><div class="empty">No clip selected.</div></div></div>
