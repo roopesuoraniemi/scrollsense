@@ -76,6 +76,25 @@ Set `SCROLLSENSE_WORKERS=6` with live inference so the queue keeps up with scrol
 Rebuild the feed from the analysed clips with `PYTHONPATH=. uv run python scripts/build_demo_feed.py`
 (keeps only embeddable Shorts and leaves out ones about death or self-harm).
 
+## Deploy the demo on Modal
+
+`modal_app.py` runs the same FastAPI app in **one always-warm container** (the queue, its pacer
+and the demo sessions live in memory, and the analysis threads must keep running). Data lives in
+`/tmp`, so a restart starts every session fresh.
+
+```bash
+uv run --with modal modal token new      # once: log in to Modal in the browser
+scripts/deploy_modal.sh serve            # optional: temporary dev URL, Ctrl-C stops it
+scripts/deploy_modal.sh                  # deploy: prints the public URL
+```
+
+The script sends only `GEMINI_API_KEY` from `.env` to a Modal secret named `scrollsense`, pins the
+dependencies from `uv.lock` into `requirements.lock.txt`, and deploys. Demo settings (live
+inference, 6 workers, 20 analyses per minute, window 5) are in `modal_app.py`. The deployed demo
+needs **no token**: share the URL as it is. Anyone can use it, so the only limit on Gemini is the
+20 analyses per minute (and anyone could list or erase demo sessions through the API). The warm container uses Modal credits around
+the clock: stop it after the event with `uv run --with modal modal app stop scrollsense-demo`.
+
 ## Drift detection
 
 The last `SCROLLSENSE_DRIFT_WINDOW` analysed Shorts (first view only) are compared with a global
@@ -194,6 +213,7 @@ A pure core inside a shell of swappable parts (see `rules/`).
 | `scrollsense/scheduling.py` | Cached or live analysis scheduling |
 | `scrollsense/api.py`, `views_api.py`, `drift_api.py`, `demo_api.py`, `auth.py` | HTTP routes and the Bearer guard |
 | `scrollsense/composition.py`, `server.py`, `__main__.py` | Settings and wiring, entry points |
+| `modal_app.py`, `scripts/deploy_modal.sh` | The web demo on Modal |
 | `web/index.html`, `app.js`, `demo-feed.json` | The demo page and its scripted feed (no build step) |
 | `web/scrollsense.user.js` | The phone userscript |
 
