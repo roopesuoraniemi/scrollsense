@@ -3,12 +3,9 @@
 **Your short-form feed knows when you're spiralling before you do.**  
 *Built at Junction 2026 — a passive mood-drift detector and gentle check-in prototype for YouTube Shorts.*
 
-> [!IMPORTANT]
-> **Research prototype, not a medical device.**  
-> Scores describe the **content**, never the person, and are not a diagnosis. ScrollSense intentionally avoids crisis or suicide alerts because a passive feed signal is not reliable enough for that.
+![ScrollSense Dashboard](docs/assets/scrollsense_dashboard.jpg)
 
-<!-- Media slot: drop a hero GIF or screenshot of the live dashboard + phone check-in here -->
-<!-- ![ScrollSense Demo](docs/assets/demo.gif) -->
+*Note: ScrollSense is a research prototype, not a medical device. Scores describe the **content**, never the person, and are not a diagnosis.*
 
 ---
 
