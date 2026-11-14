@@ -4,13 +4,14 @@ const $ = (id) => document.getElementById(id);
 const POLL_MS = 2000;
 const STRIP_MAX = 7;
 const THUMB_STEP = 92;   // thumbnail width plus gap, in px
-const state = { meta: null, viewer: null, feed: [], clips: [], current: null, follow: true, signature: '', drift: null };
+const state = { meta: null, viewer: null, feed: [], clips: [], current: null, follow: true, signature: '', drift: null, nudges: [], cooldown: null };
 
 function esc(text) {
   return String(text ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 const hhmm = (seconds) => new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const mmss = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
 // The API may require a Bearer token (SCROLLSENSE_TOKEN). Open the page once with ?token=...;
 // it is kept in localStorage and removed from the address bar.
@@ -51,6 +52,7 @@ async function init() {
   await loadViewers();
   await tick();
   setInterval(() => tick().catch((error) => setStatus(error.message, true)), POLL_MS);
+  setInterval(renderTrendText, 1000);
 }
 
 function storedViewer() {
@@ -70,7 +72,8 @@ async function loadViewers() {
 function changeViewer(viewer) {
   state.viewer = viewer;
   try { localStorage.setItem('scrollsense.viewer', viewer); } catch { /* per-viewer convenience only */ }
-  Object.assign(state, { feed: [], clips: [], current: null, signature: '', drift: null });
+  resetArrow();
+  Object.assign(state, { feed: [], clips: [], current: null, signature: '', drift: null, nudges: [], cooldown: null });
   setFollow(true);
 }
 
@@ -152,21 +155,51 @@ const LEVEL_TITLE = { normal: 'Normal range', watch: 'Watch', warning: 'Warning'
 const LEVEL_STROKE = { learning: 'var(--faint)', normal: 'var(--mut)', watch: 'var(--watch)', warning: 'var(--warn)' };
 
 function renderSignals(drift, nudges) {
+  const prevNudges = state.nudges.length;
   state.drift = drift;
+  state.nudges = nudges;
+  syncCooldown(nudges);
   const shown = nudges.slice(0, 3);   // the API lists the newest first
   $('signals').classList.toggle('solo', shown.length === 0);
-  $('nudges').innerHTML = shown.map(nudgeRow).join('');
+  $('nudges').innerHTML = shown.map((n) => nudgeRow(n, drift)).join('');
   $('drift').className = `panel ${LEVEL_CLASS[drift?.level] ?? 'quiet'}`;
-  $('drift').innerHTML = drift ? driftSummary(drift) + sparkline(drift) : '<div class="what"><span>No drift report yet</span></div>';
+  $('drift').innerHTML = drift ? driftSummary(drift, nudges[0]) + sparkline(drift, nudges) : '<div class="what"><span>No drift report yet</span></div>';
+  if (nudges.length !== prevNudges) renderMap();
 }
 
-function driftSummary(d) {
+function syncCooldown(nudges) {
+  const latest = nudges[0];
+  if (!latest || latest.cooldown_remaining_s <= 0) { state.cooldown = null; return; }
+  if (state.cooldown?.id === latest.nudge.id && state.cooldown.synced) return;
+  state.cooldown = { id: latest.nudge.id, untilMs: Date.now() + latest.cooldown_remaining_s * 1000, synced: true };
+}
+
+function cooldownSeconds() {
+  if (!state.cooldown) return 0;
+  return Math.max(0, Math.ceil((state.cooldown.untilMs - Date.now()) / 1000));
+}
+
+function renderTrendText() {
+  const node = $('trend-status');
+  if (node && state.drift) node.textContent = trendStatus(state.drift, state.nudges[0]);
+}
+
+function driftSummary(d, latest) {
   const n = d.recent.n;
   if (d.level === 'learning') return `<div class="what"><b>Collecting Shorts</b><span>${n} of ${Math.ceil(d.config.window / 2)} analysed</span></div>`;
-  return `<div class="what"><b>${LEVEL_TITLE[d.level]}</b><span>${(d.score ?? 0).toFixed(1)} SD, last ${n} Shorts</span></div>`;
+  return `<div class="what"><b>${LEVEL_TITLE[d.level]}</b><span id="trend-status">${esc(trendStatus(d, latest))}</span></div>`;
 }
 
-function sparkline(d) {
+function trendStatus(d, latest) {
+  const n = d.recent.n;
+  const wait = cooldownSeconds();
+  if (d.level !== 'warning') return `${(d.score ?? 0).toFixed(1)} SD, last ${n} Shorts${wait ? ` · check-in cooldown ${mmss(wait)}` : ''}`;
+  if (wait) return latest ? `check-in sent ${hhmm(latest.nudge.created_at)} · cooldown ${mmss(wait)}` : `check-in cooldown ${mmss(wait)}`;
+  if (latest?.state === 'open') return `check-in sent ${hhmm(latest.nudge.created_at)}`;
+  return `${(d.score ?? 0).toFixed(1)} SD, last ${n} Shorts`;
+}
+
+function sparkline(d, nudges) {
   const points = d.timeline.slice(-40);
   if (points.length < 2) return '<svg aria-hidden="true"></svg>';
   const W = 400, H = 46, P = 5;
@@ -176,16 +209,20 @@ function sparkline(d) {
   const line = points.map((p, i) => `${x(i).toFixed(1)},${y(p.score).toFixed(1)}`).join(' ');
   const stroke = LEVEL_STROKE[d.level];
   const last = { x: x(points.length - 1), y: y(points[points.length - 1].score) };
-  return `<div class="spark"><span style="top:${(y(d.config.warn) / H * 100).toFixed(0)}%">${d.config.warn} SD</span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Drift per Short; the dashed line is ${d.config.warn} SD">
-    <line x1="${P}" x2="${W - P}" y1="${y(d.config.warn)}" y2="${y(d.config.warn)}" stroke="${stroke}" stroke-dasharray="5 4" opacity=".55" vector-effect="non-scaling-stroke"/>
+  const marks = nudges.map((n) => points.findLastIndex((p) => p.seen_at <= n.nudge.created_at)).filter((i) => i >= 0)
+    .map((i) => `<line x1="${x(i)}" x2="${x(i)}" y1="${P}" y2="${H - P}" stroke="var(--warn)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"><title>Check-in sent</title></line>`).join('');
+  return `<div class="spark"><span style="top:${(y(d.config.warn) / H * 100).toFixed(0)}%">${d.config.warn} SD alarm</span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Drift per Short; the dashed line is the ${d.config.warn} SD alarm; dotted lines mark check-ins">
+    <line x1="${P}" x2="${W - P}" y1="${y(d.config.warn)}" y2="${y(d.config.warn)}" stroke="${stroke}" stroke-dasharray="5 4" opacity=".55" vector-effect="non-scaling-stroke"/>${marks}
     <polyline points="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
     <line x1="${last.x}" y1="${last.y}" x2="${last.x}" y2="${last.y}" stroke="${stroke}" stroke-width="7" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg></div>`;
 }
 
-function nudgeRow({ nudge, response, state: status }) {
+function nudgeRow({ nudge, response, state: status }, drift) {
   const chosen = nudge.card.options.find((o) => o.choice === response?.choice);
   const outcome = response ? `chose "${esc(chosen?.label ?? response.choice)}"` : status === 'open' ? 'no answer yet' : 'expired, no answer';
-  return `<div><b>Nudge ${hhmm(nudge.created_at)}</b> ${outcome}</div>`;
+  const sd = nudge.reason.match(/([\d.]+) SD/)?.[1];
+  const cause = sd ? `Drift ${sd} SD passed ${drift?.config.warn ?? 1} SD` : 'Check-in';
+  return `<div><b>${hhmm(nudge.created_at)}</b> ${cause} → ${outcome}</div>`;
 }
 
 // ---------------------------------------------------------------- carousel of scrolled Shorts
@@ -257,6 +294,7 @@ function renderMap() {
   const extra = current && !shown.includes(current) ? [current] : [];
   $('map').innerHTML = axes() + normalOverlay() + [...shown, ...extra].map(dot).join('');
   $('map').querySelectorAll('[data-id]').forEach((g) => { g.onclick = () => select(g.dataset.id); });
+  animateArrow();
 }
 
 function axes() {
@@ -301,38 +339,95 @@ function dot({ clip, x, y }) {
     <circle cx="${x}" cy="${y}" r="${current ? 6.5 : 5}" fill="${current ? 'var(--acc)' : 'var(--mut)'}" stroke="var(--card)" stroke-width="1.5" opacity="${current ? 1 : 0.7}"/></g>`;
 }
 
+function checkinActive() {
+  if (state.drift?.level !== 'warning' || !state.nudges.length) return false;
+  const tl = state.drift.timeline;
+  const calm = tl.findLastIndex((p) => p.level !== 'warning');
+  const since = calm >= 0 ? tl[calm].seen_at - 2 : 0;
+  return state.nudges.some((n) => n.nudge.created_at >= since);
+}
+
 function normalOverlay() {
   const n = state.drift?.affect_baseline;
   if (!n) return '';
   const cx = affectX(n.centre.valence), cy = affectY(n.centre.arousal);
   const rx = ELLIPSE_SD * n.sd.valence * GEO.PW / 5, ry = ELLIPSE_SD * n.sd.arousal * GEO.PH / 5;
+  const active = checkinActive();
   const ellipse = `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="var(--card)" stroke="var(--mut)" stroke-dasharray="5 4"><title>Normal range: typical affect of English words (${esc(n.cite)}), centre plus or minus 1 SD</title></ellipse>
     <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="var(--acc)" fill-opacity=".05" pointer-events="none"/>`;
   const label = `<text x="${cx}" y="${cy - ry - 5}" text-anchor="middle">typical</text>`;
-  return lowMoodQuadrant(cx, cy) + ellipse + label + driftArrow(cx, cy);
+  return lowMoodQuadrant(cx, cy, active) + ellipse + zoneForeground(cx, cy, rx, ry, active) + label + driftArrow(cx, cy);
 }
 
 // The warning zone: below the norm on both axes. The ellipse drawn over it leaves the part
 // beyond 1 SD tinted, which is exactly where a drift counts as a warning.
-function lowMoodQuadrant(cx, cy) {
+function lowMoodQuadrant(cx, cy, active) {
   const { L, T, PH } = GEO;
   const bottom = T + PH;
   return `<g pointer-events="none"><title>Low-mood zone: lower valence and lower arousal than typical</title>
-    <rect x="${L}" y="${cy}" width="${cx - L}" height="${bottom - cy}" fill="var(--warn)" fill-opacity=".07"/>
-    <line x1="${L}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="var(--warn)" stroke-opacity=".55" stroke-dasharray="2 4" stroke-width="1.5"/>
-    <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${bottom}" stroke="var(--warn)" stroke-opacity=".55" stroke-dasharray="2 4" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${bottom - 8}" style="fill:var(--warn)">depressive signal zone</text></g>`;
+    <rect x="${L}" y="${cy}" width="${cx - L}" height="${bottom - cy}" fill="var(--warn)" fill-opacity="${active ? .22 : .07}"/>
+    <line x1="${L}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="var(--warn)" stroke-opacity="${active ? .85 : .55}" stroke-dasharray="2 4" stroke-width="1.5"/>
+    <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${bottom}" stroke="var(--warn)" stroke-opacity="${active ? .85 : .55}" stroke-dasharray="2 4" stroke-width="1.5"/></g>`;
 }
+
+// Drawn above the ellipse so the outline frames the exact region beyond 1 SD when a check-in is sent.
+function zoneForeground(cx, cy, rx, ry, active) {
+  const { L, T, PH } = GEO;
+  const bottom = T + PH;
+  const border = active
+    ? `<path d="M ${L} ${cy} H ${cx - rx} A ${rx} ${ry} 0 0 0 ${cx} ${cy + ry} V ${bottom} H ${L} Z" fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-linejoin="round" pointer-events="none"/>`
+    : '';
+  return `${border}<text x="${L + (active ? 8 : 6)}" y="${bottom - 8}" style="fill:var(--warn)${active ? ';font-weight:700' : ''}" pointer-events="none">depressive signal zone</text>`;
+}
+
+// The arrow glides from where it was drawn last to the new average (and fades to the new level's
+// colour), instead of jumping, whenever a newly analysed Short moves it.
+const ARROW_MS = 900;
+const arrow = { origin: null, target: null, shown: null, colour: null, shownColour: null, frame: 0 };
 
 function driftArrow(cx, cy) {
   const centroid = state.drift.recent.centroid;
-  if (!centroid) return '';
-  const tx = affectX(centroid.valence), ty = affectY(centroid.arousal);
-  const colour = LEVEL_STROKE[state.drift.level];
-  const angle = Math.atan2(ty - cy, tx - cx);
-  const wing = (turn) => `${(tx - 11 * Math.cos(angle + turn)).toFixed(1)},${(ty - 11 * Math.sin(angle + turn)).toFixed(1)}`;
-  const tip = Math.hypot(tx - cx, ty - cy) > 5 ? `<polygon points="${tx},${ty} ${wing(0.45)} ${wing(-0.45)}" fill="${colour}"/>` : '';
-  return `<g><title>Average of the last ${state.drift.recent.n} Shorts</title><line x1="${cx}" y1="${cy}" x2="${tx}" y2="${ty}" stroke="${colour}" stroke-width="3" stroke-linecap="round"/>${tip}<circle cx="${cx}" cy="${cy}" r="3" fill="var(--mut)"/></g>`;
+  if (!centroid) return resetArrow();
+  Object.assign(arrow, { origin: { x: cx, y: cy }, target: { x: affectX(centroid.valence), y: affectY(centroid.arousal) }, colour: LEVEL_STROKE[state.drift.level] });
+  const colour = arrow.shownColour ?? arrow.colour;
+  const ease = 'style="transition:stroke .6s ease,fill .6s ease"';
+  return `<g><title>Average of the last ${state.drift.recent.n} Shorts</title><line id="arrow-line" x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="${colour}" stroke-width="3" stroke-linecap="round" ${ease}/><polygon id="arrow-head" fill="${colour}" ${ease}/><circle cx="${cx}" cy="${cy}" r="3" fill="var(--mut)"/></g>`;
+}
+
+function resetArrow() {
+  cancelAnimationFrame(arrow.frame);
+  Object.assign(arrow, { target: null, shown: null, shownColour: null });
+  return '';
+}
+
+function animateArrow() {
+  cancelAnimationFrame(arrow.frame);
+  if (!arrow.target || !$('arrow-line')) return;
+  const from = arrow.shown ?? arrow.origin, to = arrow.target;
+  const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  placeArrow(from);
+  $('arrow-line').getBoundingClientRect();   // commit the old colour so the change transitions
+  ['arrow-line', 'arrow-head'].forEach((id, i) => $(id).setAttribute(i ? 'fill' : 'stroke', arrow.colour));
+  arrow.shownColour = arrow.colour;
+  let begin = null;   // the first frame's timestamp: rAF times can precede performance.now()
+  const frame = (now) => {
+    begin ??= now;
+    const t = instant ? 1 : Math.min(1, Math.max(0, (now - begin) / ARROW_MS));
+    const eased = 1 - (1 - t) ** 3;
+    placeArrow({ x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased });
+    if (t < 1) arrow.frame = requestAnimationFrame(frame);
+  };
+  arrow.frame = requestAnimationFrame(frame);
+}
+
+function placeArrow(tip) {
+  const { x: cx, y: cy } = arrow.origin;
+  arrow.shown = tip;
+  $('arrow-line').setAttribute('x2', tip.x.toFixed(1));
+  $('arrow-line').setAttribute('y2', tip.y.toFixed(1));
+  const angle = Math.atan2(tip.y - cy, tip.x - cx);
+  const wing = (turn) => `${(tip.x - 11 * Math.cos(angle + turn)).toFixed(1)},${(tip.y - 11 * Math.sin(angle + turn)).toFixed(1)}`;
+  $('arrow-head').setAttribute('points', Math.hypot(tip.x - cx, tip.y - cy) > 5 ? `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ${wing(0.45)} ${wing(-0.45)}` : '');
 }
 
 // ---------------------------------------------------------------- wiring
