@@ -21,7 +21,7 @@ cp .env.example .env        # then set GEMINI_API_KEY and SCROLLSENSE_TOKEN
 uv run uvicorn scrollsense.server:app --reload --port 8765
 ```
 
-Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
+Open `http://localhost:8765/?token=<token>` once for the phone-connected product dashboard, or `http://localhost:8765/demo/?token=<token>` for the single-device web demo (the page remembers the token).
 
 > **Why port 8765:** this Windows machine has a port proxy on 8000 that resets `localhost:8000`.
 > Don't use `--host 0.0.0.0` on shared Wi-Fi.
@@ -33,11 +33,23 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
 - **Batch-analyse:** `uv run python -m scrollsense [--force] <url> [<url> ...]` (cached in `data/clips/`).
 - **Tests:** `uv run pytest`
 
-## The demo page
+## The demo page (`/demo/`)
 
-`/` is a web demo of the whole loop on one screen (this branch replaces the clinician page with it):
+`/demo/` is a single-device web demo of the whole loop on one screen (while `/` stays the phone-connected product dashboard):
 
-- **User sees (left):** the phone plays a scripted Shorts feed (`web/demo-feed.json`): upbeat,
+### Run the demo on localhost
+
+```bash
+uv run uvicorn scrollsense.server:app --reload --port 8765
+# or without API calls:
+# SCROLLSENSE_MOCK=1 uv run uvicorn scrollsense.server:app --reload --port 8765
+# or with live Gemini re-analysis on every viewer's first watch:
+# SCROLLSENSE_LIVE_INFERENCE=1 SCROLLSENSE_WORKERS=6 uv run uvicorn scrollsense.server:app --reload --port 8765
+```
+
+Then open **`http://localhost:8765/demo/?token=<token>`** (omit `?token=...` if `SCROLLSENSE_TOKEN` is unset in `.env`).
+
+- **User sees (left):** the phone plays a scripted Shorts feed (`web/demo/demo-feed.json`): upbeat,
   then a run of low-mood Shorts, then upbeat again. Scroll, swipe or press ↑/↓ to move; tap or
   Space to pause. Every Short shown is a real view event.
 - **Check-in card:** when the drift passes the 1 SD alarm, a card slides up on the phone, as the
@@ -52,7 +64,7 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
   check-in is sent).
 - **Clinician sees (second tab, `#clinician` opens it):** this session's check-ins with the drift
   that caused each and the answer, in red, then an **example history** (clearly labelled, invented
-  data in `web/app.js`): two weeks of check-ins per day, totals and each check-in with its answer.
+  data in `web/demo/app.js`): two weeks of check-ins per day, totals and each check-in with its answer.
   The tab shows the number of check-ins this session.
 - **Live inference** (`SCROLLSENSE_LIVE_INFERENCE=1`): each viewer's first view of a Short starts
   a fresh Gemini run (about 2 to 6 s), so results arrive after the video, never ahead of it.
@@ -60,7 +72,7 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
 - **Reset demo** (top right) erases the demo viewer and starts over.
 
 Each browser gets its own viewer (`demo-xxxxxxxx`, kept in localStorage; `?viewer=demo-name` pins
-one). Share `https://<tunnel>/?token=<token>`. With the scripted feed and window 5 the warning
+one). Share `https://<tunnel>/demo/?token=<token>`. With the scripted feed and window 5 the warning
 and the check-in card show around Short 9, a few seconds after that Short starts.
 
 The only limit on Gemini is the queue's pace: at most `SCROLLSENSE_RPM` analyses start per minute
