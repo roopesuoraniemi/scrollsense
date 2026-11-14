@@ -16,8 +16,10 @@ LOCAL_MOD=$(( (NOW + TZ_MIN * 60) % 86400 ))
 OLD_DAY=$(( NOW - 2 * 86400 - LOCAL_MOD + 14 * 3600 ))
 NIGHT_NOW=$(( NOW - LOCAL_MOD + 2 * 3600 + 15 * 60 ))
 [ "$NIGHT_NOW" -gt $(( NOW - 300 )) ] && NIGHT_NOW=$(( NIGHT_NOW - 86400 ))
-[ "$NIGHT_NOW" -lt $(( NOW - 82800 )) ] && NIGHT_NOW=$(( NOW - 1200 ))
-DAY_NOW=$(( NOW - 1800 ))
+[ "$NIGHT_NOW" -lt $(( NOW - 82800 )) ] && NIGHT_NOW=$(( NOW - 3600 ))
+DAY_NOW=$(( NOW - LOCAL_MOD + 14 * 3600 ))
+[ "$DAY_NOW" -gt $(( NOW - 300 )) ] && DAY_NOW=$(( DAY_NOW - 86400 ))
+[ "$DAY_NOW" -lt $(( NOW - 82800 )) ] && DAY_NOW=$(( NOW - 3600 ))
 
 post() {  # viewer, then "vid:base:offset:dwell:dur:loops" specs
   local viewer=$1; shift

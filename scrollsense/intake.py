@@ -94,7 +94,7 @@ class ViewIntake:
         viewer = ViewerId(batch.viewer)
         parsed = parse_events(viewer, batch.events)
         new = self.__append_fresh(viewer, parsed.events)
-        watch = self.__live.update(viewer, batch, new)
+        watch = self.__live.update(viewer, batch, parsed.events)
         queued = self.__enqueue_all(new, watch)
         return Receipt(accepted=len(new), duplicates=len(parsed.events) - len(new),
                        queued=queued, rejected=parsed.rejected)

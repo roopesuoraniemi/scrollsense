@@ -123,18 +123,22 @@ class Exposure:
         """Metric keys exemplified by this exposure, used for evidence drill-down."""
         themes = [c.key for c in CRITERIA if self.dwells_on(c)]
         affect = self.__affect_metrics()
+        diversity = self.__diversity_metrics()
         night = ["night_share"] if self.event.local_hour < NIGHT_END_HOUR else []
-        return tuple([*themes, *affect, *night])
+        return tuple([*themes, *affect, *diversity, *night])
 
     def __affect_metrics(self) -> list[str]:
         if not self.is_negative:
             return []
-        keys = ["negative_share", "mean_valence"]
-        if self.is_low_arousal_negative:
-            keys.append("low_arousal_negative_share")
-        if (self.event.dwell_s or 0.0) > 0.0:
-            keys.append("dwell_negative_share")
-        return keys
+        low = ["low_arousal_negative_share"] if self.is_low_arousal_negative else []
+        dwell = ["dwell_negative_share"] if (self.event.dwell_s or 0.0) > 0.0 else []
+        return ["negative_share", "mean_valence", *low, *dwell]
+
+    def __diversity_metrics(self) -> list[str]:
+        if self.analysis.scores.stance != DWELLING and not self.is_negative:
+            return []
+        sem = ["semantic_dispersion"] if self.analysis.embedding.vector else []
+        return [*sem, "format_entropy"]
 
 
 def composition(events: Sequence[ViewEvent], analyses: Mapping[str, ClipAnalysis],
@@ -362,7 +366,7 @@ def __to_evidence(exposure: Exposure) -> EvidenceItem:
     s = exposure.analysis.scores
     e = exposure.event
     return EvidenceItem(video_id=e.video_id, title=exposure.analysis.package.title,
-                        seen_at=e.seen_at, local_hour=round(e.local_hour, 2), dwell_s=e.dwell_s,
+                        seen_at=e.seen_at, local_hour=round(e.local_hour, 4), dwell_s=e.dwell_s,
                         valence=s.valence, arousal=s.arousal, stance=s.stance,
                         load=s.theme_load, quote=s.evidence, metrics=exposure.triggered_metrics)
 

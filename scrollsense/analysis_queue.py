@@ -94,6 +94,7 @@ class AnalysisQueue:
 
     def state_of(self, video: VideoId) -> QueueState:
         """`queued` while waiting or in flight, `failed` after an error, else `pending`."""
+        self.__prune_failures()
         with self.__ready:
             if video in self.__failures:
                 return "failed"
@@ -101,17 +102,27 @@ class AnalysisQueue:
 
     def failure(self, video: VideoId) -> Failure | None:
         """Recorded failure for `video`, or None."""
+        self.__prune_failures()
         with self.__ready:
             return self.__failures.get(video)
 
     def status(self) -> QueueStatus:
         """Current queue depth, active workers, completed count, and recent failures."""
+        self.__prune_failures()
         with self.__ready:
             failures = tuple(self.__failures.values())
             waiting = len(self.__watched) + len(self.__skips)
             return QueueStatus(depth=waiting, in_flight=len(self.__in_flight),
                                done=self.__done, failed=len(failures),
                                recent_failures=failures[-RECENT_FAILURES:])
+
+    def __prune_failures(self) -> None:
+        with self.__ready:
+            failed_ids = tuple(self.__failures)
+        resolved = [v for v in failed_ids if self.__store.load(v) is not None]
+        with self.__ready:
+            for v in resolved:
+                self.__failures.pop(v, None)
 
     def __admit(self, video: VideoId, priority: bool) -> bool:
         if video in self.__skips and priority:

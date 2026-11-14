@@ -150,7 +150,10 @@ def test_evidence_and_trajectory_handle_empty_single_and_large_histories() -> No
 
     ev = evidence_items(events, analyses, EVER)
     assert len(ev) > 0
-    assert {"a1_depressed_mood", "a4_sleep", "low_arousal_negative_share", "dwell_negative_share", "night_share"} <= set(ev[0].metrics)
+    assert {
+        "a1_depressed_mood", "a4_sleep", "low_arousal_negative_share",
+        "dwell_negative_share", "semantic_dispersion", "format_entropy", "night_share",
+    } <= set(ev[0].metrics)
 
 
 # ---------------------------------------------------------------- closed-loop guidance
@@ -306,9 +309,67 @@ def test_live_watching_lifecycle_ttl_pause_and_erase(tmp_path: Path) -> None:
     client.post("/api/views", json={"viewer": "patient-01", "paused": True})
     assert all(not f["live"] for f in client.get("/api/viewers/patient-01/feed").json())
 
+    # 4b. Closing a quick-rewatch (< 30s repeat) still clears active watch even when deduped
+    clock[0] = NOW + 10.0
+    client.post("/api/views", json={
+        "viewer": "patient-01",
+        "watching": {"video_id": "Qo4PLQXRmUw", "started_at": NOW + 10.0},
+    })
+    assert client.get("/api/viewers/patient-01/ view" if False else "/api/viewers").json()[0]["watching"] == "Qo4PLQXRmUw"
+    client.post("/api/views", json={
+        "viewer": "patient-01",
+        "events": [{"event_id": "e1-repeat", "video_id": "Qo4PLQXRmUw", "seen_at": NOW + 10.0, "dwell_s": 4.0}],
+    })
+    assert client.get("/api/viewers").json()[0]["watching"] is None
+
     # 5. GDPR erase clears both log and live state
     assert client.delete("/api/viewers/patient-01").status_code == 204
     assert client.get("/api/viewers").json() == []
+
+
+def test_queue_prunes_stale_failure_once_clip_is_stored() -> None:
+    class FlakyAnalyser(ContentAnalyser):
+        def __init__(self) -> None:
+            self.fail = True
+            self.__mock = instant_mock()
+
+        @property
+        def label(self):
+            return self.__mock.label
+
+        def describe(self, video: VideoId) -> TextPackage:
+            if self.fail:
+                raise RuntimeError("transient 503")
+            return self.__mock.describe(video)
+
+        def score(self, package: TextPackage) -> ClipScores:
+            return self.__mock.score(package)
+
+        def embed(self, package: TextPackage) -> tuple[float, ...]:
+            return self.__mock.embed(package)
+
+    flaky = FlakyAnalyser()
+    store = MemoryStore()
+    service = AnalysisService(flaky, store, time.time)
+    queue = AnalysisQueue(service, store, Pacer(0.0, time.monotonic, no_wait))
+    target = VideoId(vid("fl", 1))
+    assert queue.enqueue_if_new(target) is True
+    queue.start(1)
+    for _ in range(100):
+        if queue.status().failed == 1:
+            break
+        time.sleep(0.01)
+    assert queue.state_of(target) == "failed"
+    assert queue.failure(target) is not None
+
+    # Manual retry succeeds and stores the clip -> queue status & failure auto-prune
+    flaky.fail = False
+    service.run(
+        __import__("scrollsense.domain", fromlist=["AnalysisRequest"]).AnalysisRequest(video=target, force=True),
+        lambda _s: None,
+    )
+    assert queue.status().failed == 0
+    assert queue.failure(target) is None
 
 
 def test_mock_end_to_end_drift_readout_stance_and_safety_override(tmp_path: Path) -> None:

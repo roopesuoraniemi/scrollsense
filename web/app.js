@@ -186,12 +186,17 @@ async function refreshAll(initial = false) {
 
   const feed = await api(`/api/viewers/${encodeURIComponent(state.viewer)}/feed?limit=120`);
   const readoutQuery = buildReadoutQuery(feed);
+  const ctrlName = effectiveControl() || '';
+  const ctrlSummary = state.viewers.find((v) => v.viewer === ctrlName);
   const sig = [
     state.viewer,
-    effectiveControl() || '',
+    ctrlName,
+    ctrlSummary ? `${ctrlSummary.events}:${ctrlSummary.last_seen ?? 0}` : '',
     state.windowPreset,
     queue.depth,
     queue.in_flight,
+    queue.done,
+    queue.failed,
     feed.map((i) => `${i.event.event_id}:${i.state}:${i.live ? 1 : 0}`).join('|'),
   ].join('::');
 
@@ -388,6 +393,12 @@ function clipColour(clip) {
 function isCurrentWindowEvent(seenAt) {
   const w = state.readoutView?.windows?.current;
   if (!w) return true;
+  return seenAt >= w.start && seenAt < w.end;
+}
+
+function isBaselineWindowEvent(seenAt) {
+  const w = state.readoutView?.windows?.baseline;
+  if (!w) return false;
   return seenAt >= w.start && seenAt < w.end;
 }
 
@@ -604,27 +615,53 @@ function hashInt(text) {
 }
 
 function windowMembershipByClip() {
-  const membership = new Map(); // clipId -> 'current' | 'baseline'
+  const tallies = new Map(); // clipId -> { baseline: dwellOrCount, current: dwellOrCount }
   for (const item of state.feed) {
     const id = item.event.video_id;
-    const win = isCurrentWindowEvent(item.event.seen_at) ? 'current' : 'baseline';
-    if (!membership.has(id) || win === 'current') membership.set(id, win);
+    const weight = Math.max(0.5, item.event.dwell_s ?? 1.0);
+    const entry = tallies.get(id) || { baseline: 0, current: 0 };
+    if (isCurrentWindowEvent(item.event.seen_at)) {
+      entry.current += weight;
+    } else if (isBaselineWindowEvent(item.event.seen_at)) {
+      entry.baseline += weight;
+    }
+    tallies.set(id, entry);
+  }
+  const membership = new Map();
+  for (const [id, entry] of tallies) {
+    membership.set(id, entry.current >= entry.baseline ? 'current' : 'baseline');
   }
   return membership;
 }
 
-function centroidOf(points) {
-  if (!points.length) return null;
-  const sx = points.reduce((acc, p) => acc + p.rawX, 0) / points.length;
-  const sy = points.reduce((acc, p) => acc + p.rawY, 0) / points.length;
+function centroidOf(coords) {
+  if (!coords.length) return null;
+  const sx = coords.reduce((acc, p) => acc + p.x, 0) / coords.length;
+  const sy = coords.reduce((acc, p) => acc + p.y, 0) / coords.length;
   return { x: sx, y: sy };
 }
 
+function exposureCentroids(coordByClipId) {
+  const baseCoords = [];
+  const currCoords = [];
+  for (const item of state.feed) {
+    if (item.live || item.state !== 'scored') continue;
+    const coord = coordByClipId.get(item.event.video_id);
+    if (!coord) continue;
+    if (isCurrentWindowEvent(item.event.seen_at)) {
+      currCoords.push(coord);
+    } else if (isBaselineWindowEvent(item.event.seen_at)) {
+      baseCoords.push(coord);
+    }
+  }
+  return { base: centroidOf(baseCoords), curr: centroidOf(currCoords) };
+}
+
 function renderDriftVector(points) {
-  const basePts = points.filter((p) => p.window === 'baseline');
-  const currPts = points.filter((p) => p.window === 'current');
-  const b = centroidOf(basePts);
-  const c = centroidOf(currPts);
+  const coordByClipId = new Map(points.map((p) => [p.clip.id, { x: p.rawX, y: p.rawY }]));
+  const { base, curr } = exposureCentroids(coordByClipId);
+  const b = base || centroidOf(points.filter((p) => p.window === 'baseline').map((p) => ({ x: p.rawX, y: p.rawY })));
+  const c = curr || centroidOf(points.filter((p) => p.window === 'current').map((p) => ({ x: p.rawX, y: p.rawY })));
   if (!b || !c) return '';
   const dx = c.x - b.x;
   const dy = c.y - b.y;
@@ -1039,8 +1076,9 @@ function renderEvidenceList(rv) {
   }
 
   $('evidenceList').innerHTML = `<div class="evidence-grid">${items.map((ev) => {
-    const hh = String(Math.floor(ev.local_hour)).padStart(2, '0');
-    const mm = String(Math.round((ev.local_hour % 1) * 60) % 60).padStart(2, '0');
+    const totalMin = ((Math.round(ev.local_hour * 60) % 1440) + 1440) % 1440;
+    const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
+    const mm = String(totalMin % 60).padStart(2, '0');
     const dwell = ev.dwell_s != null ? ` · ${ev.dwell_s.toFixed(1)}s dwell` : '';
     return `<div class="ev-card">
       <div class="ev-head">
@@ -1140,7 +1178,10 @@ async function seedSampleScenario() {
   const localTodaySec = ((now + tzMin * 60) % 86400 + 86400) % 86400;
   let nightBase = now - localTodaySec + 2 * 3600 + 15 * 60;
   if (nightBase > now - 300) nightBase -= 86400;
-  if (nightBase < now - 82800) nightBase = now - 1200;
+  if (nightBase < now - 82800) nightBase = now - 3600;
+  let dayNow = now - localTodaySec + 14 * 3600;
+  if (dayNow > now - 300) dayNow -= 86400;
+  if (dayNow < now - 82800) dayNow = now - 3600;
   const oldDay = now - 2 * 86400 - localTodaySec + 14 * 3600; // 14:00 local two days ago
 
   const mk = (viewer, vid, seenAt, dwell, dur, loops = 0) => ({
@@ -1173,9 +1214,9 @@ async function seedSampleScenario() {
     mk('control-01', 'Qo4PLQXRmUw', oldDay + 10, 8.0, 15, 0),
     mk('control-01', 'RWD9TXXf1_A', oldDay + 60, 10.0, 14, 0),
     mk('control-01', 'KOiWuuzGzOw', oldDay + 110, 7.5, 16, 0),
-    mk('control-01', 'jNQXAC9IVRw', now - 1800, 9.0, 18, 0),
-    mk('control-01', 'cRftRest001', now - 1740, 11.0, 20, 0),
-    mk('control-01', 'RWD9TXXf1_A', now - 1680, 8.5, 14, 0),
+    mk('control-01', 'jNQXAC9IVRw', dayNow + 0, 9.0, 18, 0),
+    mk('control-01', 'cRftRest001', dayNow + 60, 11.0, 20, 0),
+    mk('control-01', 'RWD9TXXf1_A', dayNow + 120, 8.5, 14, 0),
   ];
 
   try {
@@ -1301,8 +1342,13 @@ $('btnCopyPair').onclick = async () => {
 };
 $('pairForm').onsubmit = () => {
   state.token = $('pairToken').value.trim();
+  const viewer = $('pairViewer').value.trim().toLowerCase();
   saveStored('scrollsense.token', state.token);
   saveStored('scrollsense.endpoint', $('pairEndpoint').value.trim() || location.origin);
+  if (/^[a-z0-9-]{3,32}$/.test(viewer)) {
+    saveStored('scrollsense.viewer', viewer);
+    state.viewer = viewer;
+  }
   state.signature = '';
   init().catch((err) => setStatus(err.message, true));
 };

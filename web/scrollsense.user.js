@@ -181,12 +181,17 @@
     return best;
   }
 
-  function samplePlayback(now) {
+  function accumulateDwell(now) {
     if (!current) return;
     const dt = Math.max(0, Math.min(now - current.lastTick, TICK_MS * 4));
     current.lastTick = now;
-    if (document.visibilityState !== 'visible') return;
-    current.dwellMs += dt;
+    if (document.visibilityState === 'visible') {
+      current.dwellMs += dt;
+    }
+  }
+
+  function sampleVideoPlayback() {
+    if (!current || document.visibilityState !== 'visible') return;
     const video = activeVideo();
     if (!video) return;
     if (isFinite(video.duration) && video.duration > 0) {
@@ -206,7 +211,7 @@
 
   function closeCurrent(now) {
     if (!current) return false;
-    samplePlayback(now);
+    accumulateDwell(now);
     const dwellS = Math.round((current.dwellMs / 1000) * 10) / 10;
     const closed = current;
     current = null;
@@ -226,18 +231,38 @@
     return true;
   }
 
+  function extractDomShortId() {
+    if (! /^\/shorts(\/|$)/.test(location.pathname)) return null;
+    const selectors = [
+      'ytd-reel-video-renderer[is-active] a[href*="/shorts/"]',
+      'ytm-reel-item-renderer[is-active] a[href*="/shorts/"]',
+      '.reel-video-in-sequence-new a[href*="/shorts/"]',
+      'link[rel="canonical"][href*="/shorts/"]',
+    ];
+    for (const sel of selectors) {
+      const nodes = document.querySelectorAll(sel);
+      for (const node of nodes) {
+        const href = String(node.getAttribute?.('href') || node.href || '');
+        const match = href.match(/\/shorts\/([\w-]{11})/);
+        if (match) return match[1];
+      }
+    }
+    return null;
+  }
+
   function currentShortId() {
     if (GM_getValue('paused', false)) return null;
     if (document.visibilityState !== 'visible') return null;
     const match = location.pathname.match(SHORT_PATH);
-    return match ? match[1] : null;
+    return match ? match[1] : extractDomShortId();
   }
 
   function tick() {
     const now = Date.now();
     const id = currentShortId();
     if (id && current && id === current.id) {
-      samplePlayback(now);
+      accumulateDwell(now);
+      sampleVideoPlayback();
       return;
     }
     const hadOpen = closeCurrent(now);
@@ -251,7 +276,9 @@
         lastTime: 0,
         maxTime: 0,
         loops: 0,
+        watchAcked: false,
       };
+      sampleVideoPlayback();
       toast(`ScrollSense ● ${id}`);
       flush();
     } else if (hadOpen) {
@@ -274,6 +301,15 @@
     };
   }
 
+  function handleRequestFailure(message) {
+    inFlight = false;
+    toast(message, true);
+    if (flushQueued) {
+      flushQueued = false;
+      flush();
+    }
+  }
+
   function flush(extra = {}) {
     const cfg = readConfig(false);
     if (!isConfigured(cfg)) return;
@@ -284,10 +320,12 @@
     const payload = buildPayload(extra);
     if (!payload.events.length && !payload.watching && !extra.paused) return;
     const sentIds = new Set(payload.events.map((e) => e.event_id));
+    const watchedId = payload.watching?.video_id || null;
     inFlight = true;
     GM_xmlhttpRequest({
       method: 'POST',
       url: `${cfg.endpoint}/api/views`,
+      timeout: 10000,
       data: JSON.stringify({ viewer: cfg.viewer, ...payload }),
       headers: {
         'Content-Type': 'application/json',
@@ -296,6 +334,9 @@
       onload: (response) => {
         inFlight = false;
         if (response.status === 202) {
+          if (watchedId && current && current.id === watchedId) {
+            current.watchAcked = true;
+          }
           if (sentIds.size) {
             buffer = buffer.filter((e) => !sentIds.has(e.event_id));
             saveBuffer();
@@ -308,10 +349,9 @@
           flush();
         }
       },
-      onerror: () => {
-        inFlight = false;
-        toast('ScrollSense: server unreachable (buffered offline)', true);
-      },
+      onerror: () => handleRequestFailure('ScrollSense: server unreachable (buffered offline)'),
+      ontimeout: () => handleRequestFailure('ScrollSense: tunnel request timed out (will retry)'),
+      onabort: () => handleRequestFailure('ScrollSense: request aborted (will retry)'),
     });
   }
 
@@ -350,8 +390,12 @@
   window.addEventListener('pagehide', () => {
     if (closeCurrent(Date.now())) flush({ paused: true });
   });
+  window.addEventListener('yt-navigate-finish', tick);
+  window.addEventListener('popstate', tick);
 
   setInterval(tick, TICK_MS);
-  setInterval(() => { if (buffer.length) flush(); }, RETRY_MS);
+  setInterval(() => {
+    if (buffer.length || (current && !current.watchAcked)) flush();
+  }, RETRY_MS);
   tick();
 })();
