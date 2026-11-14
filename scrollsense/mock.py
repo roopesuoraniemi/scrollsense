@@ -2,9 +2,9 @@
 import hashlib
 import time
 
-from .domain import AnalyserLabel, VideoId
-from .ports import ContentAnalyser
-from .schemas import STANCES, ClipScores, TextPackage
+from .domain import AnalyserLabel, Stage, VideoId
+from .ports import ContentAnalyser, Progress
+from .schemas import STANCES, Analysed, ClipScores, TextPackage
 
 
 class MockAnalyser(ContentAnalyser):
@@ -19,6 +19,12 @@ class MockAnalyser(ContentAnalyser):
     @property
     def label(self) -> AnalyserLabel:
         return AnalyserLabel(name="mock", mock=True)
+
+    def analyse(self, video: VideoId, progress: Progress) -> Analysed:
+        progress(Stage.DESCRIBING)
+        package = self.describe(video)
+        progress(Stage.SCORING)
+        return Analysed(package=package, scores=self.score(package))
 
     def describe(self, video: VideoId) -> TextPackage:
         time.sleep(self.__delay_s)

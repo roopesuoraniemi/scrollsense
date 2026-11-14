@@ -1,4 +1,4 @@
-"""Structured-output schemas for the two model stages.
+"""Structured-output schemas for the model calls (two stages, or one call).
 
 Scores describe the *content* as a typical viewer experiences it, never the people in it.
 """
@@ -84,3 +84,50 @@ class ClipScores(Frozen):
         """A copy with every score forced into its documented range (models occasionally overshoot)."""
         bounded = {k: min(3, max(0, getattr(self, k))) for k in ("negative_affect", "positive_affect")}
         return self.model_copy(update=bounded | {"arousal": min(5, max(1, self.arousal))})
+
+
+def _described(field: str) -> str | None:
+    return TextPackage.model_fields[field].description
+
+
+def _scored(field: str) -> str | None:
+    return ClipScores.model_fields[field].description
+
+
+class QuickAnalysis(Frozen):
+    """One call's output: a short description, then the scores (rationale before numbers).
+    Leaves out the transcript and full descriptions to keep the answer short and fast."""
+
+    title: str = Field(description=_described("title"))
+    format: Format
+    main_message: str = Field(description=_described("main_message"))
+    intended_meaning: str = Field(description=_described("intended_meaning"))
+    emotional_cues: str = Field(description=_described("emotional_cues"))
+    people_present: bool
+    language: str = Field(description=_described("language"))
+    rationale: str = Field(description=_scored("rationale"))
+    evidence: str = Field(description="One short paraphrase of what in the video justifies the "
+                          "affect scores")
+    negative_affect: int = Field(description=_scored("negative_affect"))
+    positive_affect: int = Field(description=_scored("positive_affect"))
+    arousal: int = Field(description=_scored("arousal"))
+    stance: Stance = Field(description=_scored("stance"))
+    hopeful: bool = Field(description=_scored("hopeful"))
+
+    def analysed(self) -> "Analysed":
+        """As a package (transcript and full descriptions empty) and clamped scores."""
+        package = TextPackage(transcript="", on_screen_text="", visual_description="",
+                              audio_description="", **self.model_dump(include=set(_PACKAGE_FIELDS)))
+        scores = ClipScores(**self.model_dump(include=set(ClipScores.model_fields)))
+        return Analysed(package=package, scores=scores.clamped())
+
+
+_PACKAGE_FIELDS = ("title", "format", "main_message", "intended_meaning", "emotional_cues",
+                   "people_present", "language")
+
+
+class Analysed(Frozen):
+    """What an analyser returns for one video."""
+
+    package: TextPackage
+    scores: ClipScores
