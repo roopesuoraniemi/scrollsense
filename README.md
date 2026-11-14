@@ -34,17 +34,41 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
 - **Batch-analyse:** `uv run python -m scrollsense [--force] <url> [<url> ...]` (cached in `data/clips/`).
 - **Tests:** `uv run pytest`
 
-## The page
+## The demo page
 
-- **Warning panel:** the drift level, its size in SD and the number of Shorts judged, with a
-  chart of the drift per Short and the 1 SD line.
-- **Nudge panel** (green): the last three check-in cards sent to the phone and the answer.
-- **Carousel:** thumbnails of the scrolled Shorts; flip with the arrows or the arrow keys.
-  Flipping back pauses **Live**; press Live to follow the newest Short again.
-- **Video and text package:** title, format, main message, meaning and cues; the transcript,
-  on-screen text, visuals and audio are under **Details**.
-- **Affect map:** valence by arousal for the Shorts in the drift window, the 1 SD normal
-  range (dashed ellipse) and an arrow from typical to their average.
+`/` is a web demo of the whole loop on one screen (this branch replaces the clinician page with it):
+
+- **Phone (left):** plays a scripted Shorts feed (`web/demo-feed.json`): upbeat, then a run of
+  low-mood Shorts, then upbeat again. Scroll, swipe or press ↑/↓ to move; tap or Space to pause.
+  Every Short shown is a real view event, so the right side updates as you scroll.
+- **Check-in card:** when a nudge is due it appears on the phone, as the patient sees it. "I want
+  to take a break" blanks the phone; **Reset demo** erases the demo viewer and starts over.
+- **Add a Short:** paste a YouTube Short URL and it plays next.
+- **Live inference** (`SCROLLSENSE_LIVE_INFERENCE=1`): each viewer's first view of a Short starts
+  a fresh Gemini run (about 15 to 60 s), so results arrive after the video, never ahead of it. Until
+  the run is done the page shows a timer, and any older stored result is hidden from the feed,
+  the drift and the nudge. Scores can differ a little between runs, so where the warning starts
+  varies.
+- **Clinician view (right):** warning panel with the drift chart, the check-ins and answers, the
+  text package of the Short on the phone, and the affect map with the low-mood zone.
+
+Each browser gets its own viewer (`demo-xxxxxxxx`, kept in localStorage; `?viewer=demo-name` pins
+one). Share `https://<tunnel>/?token=<token>`. With the scripted feed and window 5 the warning
+shows around Short 9, once the runs for those Shorts are done.
+
+Gemini runs (live runs and pasted Shorts) are capped, because a shared link spends credits. Over
+the cap, views fall back to stored results:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SCROLLSENSE_LIVE_INFERENCE` | `0` | `1`: a fresh run on each viewer's first view of a Short |
+| `SCROLLSENSE_RUNS_PER_VIEWER` | `40` | Runs per viewer (a reset does not refund them) |
+| `SCROLLSENSE_RUNS_TOTAL` | `400` | Runs per server run |
+
+Set `SCROLLSENSE_WORKERS=6` with live inference so the queue keeps up with scrolling.
+
+Rebuild the feed from the analysed clips with `PYTHONPATH=. uv run python scripts/build_demo_feed.py`
+(keeps only embeddable Shorts and leaves out ones about death or self-harm).
 
 ## Drift detection
 
@@ -100,7 +124,7 @@ All routes need `Authorization: Bearer <token>` when `SCROLLSENSE_TOKEN` is set.
 
 | Method and path | Returns |
 |---|---|
-| `GET /api/meta` | `{analyser: {name, mock}}` |
+| `GET /api/meta` | `{analyser: {name, mock}, live}` |
 | `GET /api/clips`, `GET /api/clips/{id}` | clip summaries `{id, title, valence, arousal, stance}`; one full analysis |
 | `POST /api/views` `{viewer, events: [{event_id, video_id or url, seen_at, dwell_s?, surface?, ...}]}` | 202 `{accepted, duplicates, queued, rejected, nudge}`; only `surface: "shorts"` is analysed |
 | `GET /api/viewers` | `[{viewer, events, last_seen}]` |
@@ -110,6 +134,7 @@ All routes need `Authorization: Bearer <token>` when `SCROLLSENSE_TOKEN` is set.
 | `POST /api/viewers/{v}/nudges/{id}/response` `{choice}` | 204; 404 unknown, 409 already answered, 422 not an option |
 | `DELETE /api/viewers/{v}` | 204; erases the viewer's views and nudges (GDPR) |
 | `GET /api/queue` | `{depth, in_flight, done, failed, recent_failures}` |
+| `POST /api/demo/shorts` `{viewer, url}` | 201 `{video_id, state}`; checks the run budget (and in cache mode queues the Short); 400 bad input, 429 over budget |
 
 Other settings: `SCROLLSENSE_WORKERS` (2), `SCROLLSENSE_RPM` (20 analyses per minute, 0 = unpaced),
 `SCROLLSENSE_DATA` (`data`), `GEMINI_MODEL` (`gemini-4-hydrogen`).
@@ -129,9 +154,11 @@ A pure core inside a shell of swappable parts (see `rules/`).
 | `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations |
 | `scrollsense/store.py`, `viewlog.py` | JSON and JSONL storage |
 | `scrollsense/service.py`, `analysis_queue.py`, `intake.py` | Describe-then-score pipeline, paced queue, view intake |
-| `scrollsense/api.py`, `views_api.py`, `drift_api.py`, `auth.py` | HTTP routes and the Bearer guard |
+| `scrollsense/scheduling.py` | Cached or live analysis scheduling, and the run budget |
+| `scrollsense/api.py`, `views_api.py`, `drift_api.py`, `demo_api.py`, `auth.py` | HTTP routes and the Bearer guard |
 | `scrollsense/composition.py`, `server.py`, `__main__.py` | Settings and wiring, entry points |
-| `web/index.html`, `app.js`, `scrollsense.user.js` | The laptop page and the phone userscript (no build step) |
+| `web/index.html`, `app.js`, `demo-feed.json` | The demo page and its scripted feed (no build step) |
+| `web/scrollsense.user.js` | The phone userscript |
 
 ## Notes and limits
 

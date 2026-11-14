@@ -68,6 +68,7 @@ class AnalysisQueue:
         self.__waiting: deque[VideoId] = deque()
         self.__in_flight: set[VideoId] = set()
         self.__failures: dict[VideoId, Failure] = {}
+        self.__forced: set[VideoId] = set()
         self.__done = 0
         self.__ready = Condition()
 
@@ -84,6 +85,18 @@ class AnalysisQueue:
         with self.__ready:
             if self.__known(video):
                 return False
+            self.__waiting.append(video)
+            self.__ready.notify()
+        return True
+
+    def enqueue_fresh(self, video: VideoId) -> bool:
+        """Queue a forced re-analysis (stored result ignored) unless `video` is already queued or
+        in flight; clears an earlier failure. Returns whether it was queued."""
+        with self.__ready:
+            if video in self.__waiting or video in self.__in_flight:
+                return False
+            self.__failures.pop(video, None)
+            self.__forced.add(video)
             self.__waiting.append(video)
             self.__ready.notify()
         return True
@@ -111,20 +124,22 @@ class AnalysisQueue:
 
     def __work(self) -> None:
         while True:
-            video = self.__take()
+            request = self.__take()
             self.__pacer.wait_turn()
-            self.__finish(video, self.__attempt(video))
+            self.__finish(request.video, self.__attempt(request))
 
-    def __take(self) -> VideoId:
+    def __take(self) -> AnalysisRequest:
         with self.__ready:
             self.__ready.wait_for(lambda: bool(self.__waiting))
             video = self.__waiting.popleft()
             self.__in_flight.add(video)
-            return video
+            force = video in self.__forced
+            self.__forced.discard(video)
+            return AnalysisRequest(video=video, force=force)
 
-    def __attempt(self, video: VideoId) -> str | None:
+    def __attempt(self, request: AnalysisRequest) -> str | None:
         try:
-            self.__service.run(AnalysisRequest(video=video), self.__quiet)
+            self.__service.run(request, self.__quiet)
         except Exception as error:  # a worker thread must record, never die silently
             return f"{type(error).__name__}: {error}"
         return None
