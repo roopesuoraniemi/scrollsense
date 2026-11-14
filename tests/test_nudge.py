@@ -58,9 +58,9 @@ def test_warning_streak_counts_only_judged_points() -> None:
     assert not warning_streak([point("learning"), point("warning")], 2)
 
 
-def test_support_nudge_after_a_sustained_warning() -> None:
-    assert POLICY.decide(report(SAD, SAD), NudgeHistory(), NOW) is None  # one judged point
-    nudge = issued(POLICY, (SAD, SAD, SAD), NOW)
+def test_support_nudge_on_the_first_warning() -> None:
+    assert POLICY.decide(report(SAD), NudgeHistory(), NOW) is None  # no warning yet
+    nudge = issued(POLICY, (SAD, SAD), NOW)
     assert nudge.card.kind == "support" and nudge.video_id is None
     assert nudge.card.title == "How do these videos feel right now?"
     assert [o.choice for o in nudge.card.options] == ["ok", "take_break", "not_now"]
@@ -191,9 +191,15 @@ def answer(client: TestClient, nudge_id: str, body: dict) -> int:
     return client.post(f"/api/viewers/patient-01/nudges/{nudge_id}/response", json=body).status_code
 
 
+def test_a_longer_streak_waits_for_more_warnings() -> None:
+    patient = NudgePolicy(SETTINGS.model_copy(update={"streak": 2}))
+    assert patient.decide(report(SAD, SAD), NudgeHistory(), NOW) is None
+    assert patient.decide(report(SAD, SAD, SAD), NudgeHistory(), NOW) is not None
+
+
 def test_receipt_carries_the_open_nudge_only_once_due(client: TestClient) -> None:
-    assert client.post("/api/views", json=shorts(*range(10))).json()["nudge"] is None
-    card = client.post("/api/views", json=shorts(10)).json()["nudge"]
+    assert client.post("/api/views", json=shorts(*range(9))).json()["nudge"] is None
+    card = client.post("/api/views", json=shorts(9)).json()["nudge"]
     assert card["kind"] == "support" and set(card) == {"id", "kind", "title", "message", "options",
                                                        "expires_at"}
     assert client.post("/api/views", json=shorts(10)).json()["nudge"] == card

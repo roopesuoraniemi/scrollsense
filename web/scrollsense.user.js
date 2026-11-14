@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ScrollSense logger
 // @namespace    scrollsense
-// @version      0.9
-// @description  Sends the IDs of the YouTube Shorts you watch (and how long you stayed) to your own ScrollSense server, and shows its occasional check-in cards.
+// @version      0.10
+// @description  Sends the IDs of the YouTube Shorts you watch to your own ScrollSense server, and shows its occasional check-in cards.
 // @match        https://m.youtube.com/*
 // @match        https://www.youtube.com/*
 // @grant        GM_xmlhttpRequest
@@ -15,12 +15,13 @@
 (function () {
   'use strict';
   const SHORT = /^\/shorts\/([\w-]{11})/;
-  const CONSENT = 'ScrollSense research prototype.\n\nWhile you watch YouTube Shorts in this browser, it sends each video ID, the time and how long you stayed to the server you choose. Nothing else (no account, comments or messages).\n\nPause anytime from the Violentmonkey menu. Agree?';
+  const CONSENT = 'ScrollSense research prototype.\n\nWhile you watch YouTube Shorts in this browser, it sends each video ID and the time to the server you choose. Nothing else (no account, comments or messages).\n\nPause anytime from the Violentmonkey menu. Agree?';
   let current = null;
   let buffer = GM_getValue('buffer', []);
   let showing = null;
   let lastSent = 0;
-  const HEARTBEAT_MS = 10000;
+  let sending = false;
+  const HEARTBEAT_MS = 2000;
 
   function setting(key, question) {
     let value = GM_getValue(key, '');
@@ -62,14 +63,12 @@
     setTimeout(() => box.remove(), 1500);
   }
 
-  function closeCurrent(now) {
-    if (!current) return;
-    const video = document.querySelector('video');
+  // A view is logged and sent the moment a Short opens, so the server analyses it while it plays
+  // (no dwell time: waiting for the swipe would delay the analysis and any check-in card).
+  function logView(id, now) {
     buffer.push({
-      event_id: crypto.randomUUID(), video_id: current.id, seen_at: current.started / 1000,
-      tz_offset_min: -new Date().getTimezoneOffset(), dwell_s: (now - current.started) / 1000,
-      duration_s: video && isFinite(video.duration) ? video.duration : null,
-      source: 'shorts_web', surface: 'shorts',
+      event_id: crypto.randomUUID(), video_id: id, seen_at: now / 1000,
+      tz_offset_min: -new Date().getTimezoneOffset(), source: 'shorts_web', surface: 'shorts',
     });
     GM_setValue('buffer', buffer);
   }
@@ -78,10 +77,11 @@
     const match = GM_getValue('paused', false) ? null : location.pathname.match(SHORT);
     const id = match ? match[1] : null;
     if (id === (current && current.id)) return;
-    const now = Date.now();
-    closeCurrent(now);
-    current = id ? { id, started: now } : null;
-    if (id) toast(`ScrollSense ✓ ${id} (${buffer.length} waiting)`);
+    current = id ? { id } : null;
+    if (!id) return;
+    logView(id, Date.now());
+    flush();
+    toast(`ScrollSense ✓ ${id}`);
   }
 
   function onSent(response, sent) {
@@ -200,9 +200,7 @@
   // pages open the browser's home page, so pause, try to close, else switch to a blank page.
   function leaveFeed(card, option) {
     document.querySelectorAll('video').forEach((video) => video.pause());
-    closeCurrent(Date.now());
     current = null;
-    flush();
     let gone = false;
     const go = () => { if (!gone) { gone = true; window.close(); location.replace('about:blank'); } };
     report(card, option.choice, go);
@@ -216,23 +214,27 @@
     report(card, option.choice);
   }
 
-  // An empty batch is a heartbeat: analyses finish after the swipe, so a card that becomes due
-  // while the viewer stays on one Short still arrives (in the receipt) within HEARTBEAT_MS.
+  // An empty batch is a heartbeat: an analysis finishes a few seconds after the Short opens, so a
+  // card that becomes due then still arrives (in the receipt) within HEARTBEAT_MS.
   function heartbeatDue() {
     return !showing && !GM_getValue('paused', false) && document.visibilityState === 'visible'
       && SHORT.test(location.pathname) && Date.now() - lastSent >= HEARTBEAT_MS;
   }
 
+  // One request at a time: onSent drops the first `sent` events, which must be the ones it sent.
   function flush() {
-    if (!buffer.length && !heartbeatDue()) return;
+    if (sending || (!buffer.length && !heartbeatDue())) return;
     const { endpoint, token, viewer } = config();
     const sent = buffer.length;
+    sending = true;
     lastSent = Date.now();
     GM_xmlhttpRequest({
       method: 'POST', url: `${endpoint}/api/views`, data: JSON.stringify({ viewer, events: buffer.slice(0, sent) }),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      onload: (response) => onSent(response, sent),
-      onerror: () => { if (sent) toast('ScrollSense: server unreachable'); },
+      timeout: 15000,
+      onload: (response) => { sending = false; onSent(response, sent); },
+      onerror: () => { sending = false; if (sent) toast('ScrollSense: server unreachable'); },
+      ontimeout: () => { sending = false; },
     });
   }
 
@@ -249,5 +251,5 @@
   GM_registerMenuCommand('Change server, token or pseudonym', reconfigure);
   config();
   setInterval(tick, 500);
-  setInterval(flush, 5000);
+  setInterval(flush, 1000);
 })();

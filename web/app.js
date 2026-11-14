@@ -71,6 +71,7 @@ function changeViewer(viewer) {
   state.viewer = viewer;
   try { localStorage.setItem('scrollsense.viewer', viewer); } catch { /* per-viewer convenience only */ }
   Object.assign(state, { feed: [], clips: [], current: null, signature: '', drift: null });
+  resetArrow();
   setFollow(true);
 }
 
@@ -257,6 +258,7 @@ function renderMap() {
   const extra = current && !shown.includes(current) ? [current] : [];
   $('map').innerHTML = axes() + normalOverlay() + [...shown, ...extra].map(dot).join('');
   $('map').querySelectorAll('[data-id]').forEach((g) => { g.onclick = () => select(g.dataset.id); });
+  animateArrow();
 }
 
 function axes() {
@@ -324,15 +326,53 @@ function lowMoodQuadrant(cx, cy) {
     <text x="${L + 6}" y="${bottom - 8}" style="fill:var(--warn)">depressive signal zone</text></g>`;
 }
 
+// The arrow glides from where it was drawn last to the new average (and fades to the new level's
+// colour), instead of jumping, whenever a newly analysed Short moves it.
+const ARROW_MS = 700;
+const arrow = { origin: null, target: null, shown: null, colour: null, shownColour: null, frame: 0 };
+
 function driftArrow(cx, cy) {
   const centroid = state.drift.recent.centroid;
-  if (!centroid) return '';
-  const tx = affectX(centroid.valence), ty = affectY(centroid.arousal);
-  const colour = LEVEL_STROKE[state.drift.level];
-  const angle = Math.atan2(ty - cy, tx - cx);
-  const wing = (turn) => `${(tx - 11 * Math.cos(angle + turn)).toFixed(1)},${(ty - 11 * Math.sin(angle + turn)).toFixed(1)}`;
-  const tip = Math.hypot(tx - cx, ty - cy) > 5 ? `<polygon points="${tx},${ty} ${wing(0.45)} ${wing(-0.45)}" fill="${colour}"/>` : '';
-  return `<g><title>Average of the last ${state.drift.recent.n} Shorts</title><line x1="${cx}" y1="${cy}" x2="${tx}" y2="${ty}" stroke="${colour}" stroke-width="3" stroke-linecap="round"/>${tip}<circle cx="${cx}" cy="${cy}" r="3" fill="var(--mut)"/></g>`;
+  if (!centroid) return resetArrow();
+  Object.assign(arrow, { origin: { x: cx, y: cy }, target: { x: affectX(centroid.valence), y: affectY(centroid.arousal) }, colour: LEVEL_STROKE[state.drift.level] });
+  const colour = arrow.shownColour ?? arrow.colour;
+  const ease = 'style="transition:stroke .6s ease,fill .6s ease"';
+  return `<g><title>Average of the last ${state.drift.recent.n} Shorts</title><line id="arrow-line" x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="${colour}" stroke-width="3" stroke-linecap="round" ${ease}/><polygon id="arrow-head" fill="${colour}" ${ease}/><circle cx="${cx}" cy="${cy}" r="3" fill="var(--mut)"/></g>`;
+}
+
+function resetArrow() {
+  cancelAnimationFrame(arrow.frame);
+  Object.assign(arrow, { target: null, shown: null, shownColour: null });
+  return '';
+}
+
+function animateArrow() {
+  cancelAnimationFrame(arrow.frame);
+  if (!arrow.target || !$('arrow-line')) return;
+  const from = arrow.shown ?? arrow.origin, to = arrow.target;
+  const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  placeArrow(from);
+  $('arrow-line').getBoundingClientRect();   // commit the old colour so the change transitions
+  ['arrow-line', 'arrow-head'].forEach((id, i) => $(id).setAttribute(i ? 'fill' : 'stroke', arrow.colour));
+  arrow.shownColour = arrow.colour;
+  const begin = performance.now();
+  const frame = (now) => {
+    const t = instant ? 1 : Math.min(1, (now - begin) / ARROW_MS);
+    const eased = 1 - (1 - t) ** 3;
+    placeArrow({ x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased });
+    if (t < 1) arrow.frame = requestAnimationFrame(frame);
+  };
+  arrow.frame = requestAnimationFrame(frame);
+}
+
+function placeArrow(tip) {
+  const { x: cx, y: cy } = arrow.origin;
+  arrow.shown = tip;
+  $('arrow-line').setAttribute('x2', tip.x.toFixed(1));
+  $('arrow-line').setAttribute('y2', tip.y.toFixed(1));
+  const angle = Math.atan2(tip.y - cy, tip.x - cx);
+  const wing = (turn) => `${(tip.x - 11 * Math.cos(angle + turn)).toFixed(1)},${(tip.y - 11 * Math.sin(angle + turn)).toFixed(1)}`;
+  $('arrow-head').setAttribute('points', Math.hypot(tip.x - cx, tip.y - cy) > 5 ? `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ${wing(0.45)} ${wing(-0.45)}` : '');
 }
 
 // ---------------------------------------------------------------- wiring

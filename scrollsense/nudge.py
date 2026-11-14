@@ -56,7 +56,7 @@ class NudgeSettings(Frozen):
     """
 
     enabled: bool = True
-    streak: int = Field(default=2, ge=1)
+    streak: int = Field(default=1, ge=1)
     cooldown_s: float = Field(default=600.0, ge=0)
     ok_factor: float = Field(default=2.0, ge=1)
     expire_s: float = Field(default=900.0, gt=0)

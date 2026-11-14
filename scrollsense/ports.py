@@ -4,16 +4,16 @@ from typing import Callable, Sequence
 
 from .domain import AnalyserLabel, ClipAnalysis, Stage, VideoId
 from .nudge import Nudge, NudgeCard, NudgeHistory, NudgeResponse
-from .schemas import ClipScores, TextPackage
+from .schemas import Analysed
 from .views import ViewerId, ViewEvent, Window
 
 Progress = Callable[[Stage], None]
 
 
 class ContentAnalyser(ABC):
-    """Turns a video into a text package and scores it.
+    """Turns a video into a text package and affect scores.
 
-    Implementations may call remote models: every method can block for seconds and raise.
+    Implementations may call remote models: `analyse` can block for seconds and raise.
     """
 
     @property
@@ -22,12 +22,9 @@ class ContentAnalyser(ABC):
         """Which models this analyser uses."""
 
     @abstractmethod
-    def describe(self, video: VideoId) -> TextPackage:
-        """Watch `video` and describe its content."""
-
-    @abstractmethod
-    def score(self, package: TextPackage) -> ClipScores:
-        """Score the package's affect, already clamped to range."""
+    def analyse(self, video: VideoId, progress: Progress) -> Analysed:
+        """Watch `video`, describe it and score its affect (clamped to range), reporting each
+        Stage it enters to `progress`."""
 
 
 class AnalysisStore(ABC):
