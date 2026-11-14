@@ -46,9 +46,10 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
 - **Want to test your own video?** Paste a YouTube Short URL and it plays next. The phone shrinks
   with the window height so this box stays on screen.
 - **Only software sees (right, first tab):** a compact trend strip on top (drift per analysed
-  Short, the 1 SD alarm line, a dotted mark where each check-in was sent, and a status line such
-  as "Warning: 2.8 SD, past the 1 SD alarm, check-in sent 19.57"), then the Short's text
-  description and the mood map of the recent Shorts with the low-mood zone.
+  Short, the 1 SD alarm line, a dotted mark where each check-in was sent, and a status line with
+  any active check-in cooldown), then the Short's text
+  description and the mood map of the recent Shorts with the low-mood zone (highlighted when a
+  check-in is sent).
 - **Clinician sees (second tab, `#clinician` opens it):** this session's check-ins with the drift
   that caused each and the answer, in red, then an **example history** (clearly labelled, invented
   data in `web/app.js`): two weeks of check-ins per day, totals and each check-in with its answer.
@@ -112,7 +113,7 @@ flagged too. Levels stay `learning` until the window is half full. Details and e
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SCROLLSENSE_DRIFT_WINDOW` | `10` | Window in analysed Shorts |
+| `SCROLLSENSE_DRIFT_WINDOW` | `5` | Window in analysed Shorts |
 | `SCROLLSENSE_DRIFT_WATCH` | `1.0` | `watch` above this many SD into the bottom left (≥ 1) |
 | `SCROLLSENSE_DRIFT_WARN` | `1.0` | `warning` above this many SD (≥ 1); above watch brings back a watch band |
 
@@ -128,7 +129,7 @@ python -I scripts/build_affect_norms.py --lexicons DIR     # rebuild the norms (
 points are all `warning` (by default the first warning is enough), no card is open and the
 cooldown has passed, the next view receipt carries a card. The userscript sends each view the
 moment a Short opens and, while one is open, an empty batch every 2 s, so the card shows a few
-seconds after the warning forms (analysis about 2 s, plus up to 2 s): "How do these videos feel right now?" with three equal options: I'm OK, I want
+seconds after the warning forms (analysis about 2 s, plus up to 2 s): "How do these videos feel right now?" with three equal options: I am okay, I want
 to take a break, Not now. "I want to take a break" pauses the video and closes the tab (or
 switches to a blank page). There is no "refresh my feed" option, because steering the feed
 would erase the signal. The card never names a diagnosis, a mood or a video. Design:
@@ -138,8 +139,8 @@ would erase the signal. The card never names a diagnosis, a mood or a video. Des
 |---|---|---|
 | `SCROLLSENSE_NUDGE_ENABLED` | `1` | `0` turns nudges off |
 | `SCROLLSENSE_NUDGE_STREAK` | `1` | Consecutive judged points at `warning` |
-| `SCROLLSENSE_NUDGE_COOLDOWN_S` | `600` | Seconds between cards (doubled after "I'm OK") |
-| `SCROLLSENSE_NUDGE_OK_FACTOR` | `2` | Cooldown multiplier after "I'm OK" |
+| `SCROLLSENSE_NUDGE_COOLDOWN_S` | `900` | Seconds of cooldown after answering a card (15 min) |
+| `SCROLLSENSE_NUDGE_OK_FACTOR` | `1` | Cooldown multiplier after "I am okay" |
 | `SCROLLSENSE_NUDGE_EXPIRE_S` | `900` | An unanswered card stops showing after this |
 | `SCROLLSENSE_NUDGE_QUIET_FROM` / `_QUIET_TO` | unset | Quiet hours (local hour 0-23) |
 | `SCROLLSENSE_NUDGE_TZ_OFFSET_MIN` | `120` | Local time for quiet hours, minutes east of UTC |

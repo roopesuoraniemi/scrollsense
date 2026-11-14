@@ -23,18 +23,26 @@ class NudgeJudge:
     def due(self, viewer: ViewerId, history: NudgeHistory, now: float) -> Nudge | None:
         return self.__policy.decide(self.__drift.report(viewer), history, now)
 
+    def cooldown_remaining(self, entry: NudgeEntry, now: float) -> float:
+        if entry.response is None or entry.nudge.card.kind != "support":
+            return 0.0
+        return max(0.0, self.__policy.cooldown_until(entry) - now)
+
 
 class NudgeHistoryItem(Frozen):
-    """One issued nudge for the clinician view: the full nudge, the answer if any, and
-    whether it is still `open`, `answered` or `expired`."""
+    """One issued nudge for the clinician view: the full nudge, the answer if any,
+    whether it is still `open`, `answered` or `expired`, and remaining cooldown seconds."""
 
     nudge: Nudge
     response: NudgeResponse | None
     state: NudgeState
+    cooldown_remaining_s: float = 0.0
 
     @classmethod
-    def of(cls, entry: NudgeEntry, now: float) -> "NudgeHistoryItem":
-        return cls(nudge=entry.nudge, response=entry.response, state=entry.state(now))
+    def of(cls, entry: NudgeEntry, now: float,
+           cooldown_remaining_s: float = 0.0) -> "NudgeHistoryItem":
+        return cls(nudge=entry.nudge, response=entry.response, state=entry.state(now),
+                   cooldown_remaining_s=cooldown_remaining_s)
 
 
 class NudgeDesk(Nudger):
@@ -70,7 +78,8 @@ class NudgeDesk(Nudger):
         """`viewer`'s nudges, newest first."""
         now = self.__clock()
         entries = self.__log.history(viewer).entries
-        return tuple(NudgeHistoryItem.of(e, now) for e in reversed(entries))
+        return tuple(NudgeHistoryItem.of(e, now, self.__judge.cooldown_remaining(e, now))
+                     for e in reversed(entries))
 
     def erase(self, viewer: ViewerId) -> None:
         with self.__lock:

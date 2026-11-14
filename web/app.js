@@ -8,9 +8,10 @@ const POLL_MS = 2000;
 const HEARTBEAT_MS = 2000;   // an empty view batch, so a card that becomes due arrives within 2 s
 const SWIPE_PX = 40;
 const WHEEL_LOCK_MS = 650;
+const DEFAULT_COOLDOWN_S = 900;
 const state = {
   meta: null, viewer: null, script: [], playlist: [], at: -1, feed: [], clips: [], drift: null,
-  current: null, signature: '', card: null, answered: new Set(), onBreak: false,
+  nudges: [], cooldown: null, current: null, signature: '', card: null, answered: new Set(), onBreak: false,
   muted: true, paused: false, lastPost: 0, wheelUntil: 0, pointer: null,
 };
 
@@ -19,6 +20,7 @@ function esc(text) {
 }
 
 const hhmm = (seconds) => new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const mmss = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
 // ---------------------------------------------------------------- token and demo viewer
 
@@ -75,7 +77,7 @@ async function init() {
   state.playlist = [...state.script];
   show(0);
   setInterval(() => tick().catch((error) => setStatus(error.message, true)), POLL_MS);
-  setInterval(heartbeat, 1000);
+  setInterval(onSecond, 1000);
 }
 
 function renderMode() {
@@ -99,29 +101,71 @@ function show(index) {
 
 const step = (delta) => show(state.at + delta);
 
+let playerDuration = 0, looping = false;
+
 function renderPlayer() {
   const { id } = state.playlist[state.at];
-  const query = `enablejsapi=1&rel=0&playsinline=1&autoplay=1&mute=1&loop=1&controls=0&playlist=${id}&origin=${encodeURIComponent(location.origin)}`;
+  const query = `enablejsapi=1&rel=0&playsinline=1&autoplay=1&mute=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&origin=${encodeURIComponent(location.origin)}`;
+  playerDuration = 0;
+  looping = false;
   $('screen').style.backgroundImage = `url('https://i.ytimg.com/vi/${id}/hqdefault.jpg')`;
-  $('player').innerHTML = `<iframe src="https://www.youtube.com/embed/${id}?${query}" title="Short ${state.at + 1}" allow="autoplay; encrypted-media"></iframe>`;
-  $('player').querySelector('iframe').addEventListener('load', () => {
+  $('player').classList.add('loading');
+  $('player').innerHTML = `<iframe src="https://www.youtube.com/embed/${id}?${query}" title="Short ${state.at + 1}" tabindex="-1" allow="autoplay; encrypted-media"></iframe>`;
+  const frame = $('player').querySelector('iframe');
+  frame.addEventListener('load', () => {
+    [0, 250, 600].forEach((ms) => setTimeout(() => listenToPlayer(frame), ms));
+    setTimeout(() => { if ($('player').contains(frame)) $('player').classList.remove('loading'); }, 800);
     if (!state.muted) [700, 1500].forEach((ms) => setTimeout(() => command('unMute'), ms));
   });
+}
+
+function listenToPlayer(frame) {
+  if (!$('player').contains(frame)) return;
+  frame.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+}
+
+function onPlayerMessage(event) {
+  if (!String(event.origin).includes('youtube')) return;
+  const frame = $('player').querySelector('iframe');
+  if (!frame || event.source !== frame.contentWindow) return;
+  let data;
+  try { data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+  const info = data?.info;
+  if (!info || typeof info !== 'object') return;
+  if (typeof info.duration === 'number' && info.duration > 0) playerDuration = info.duration;
+  if (info.playerState === 1) {
+    $('player').classList.remove('loading');
+    if (state.paused) command('pauseVideo');
+  }
+  if (typeof info.currentTime === 'number' && playerDuration > 0.6) {
+    if (info.currentTime >= playerDuration - 0.3 && !looping) {
+      looping = true;
+      command('seekTo', [0, true]);
+      if (!state.paused) command('playVideo');
+    } else if (info.currentTime < playerDuration - 0.5) {
+      looping = false;
+    }
+  }
+  if (info.playerState === 0 && !state.paused) {
+    command('seekTo', [0, true]);
+    command('playVideo');
+  }
 }
 
 function renderPhoneChrome() {
   $('pos').textContent = `${state.at + 1}/${state.playlist.length}`;
   $('up').disabled = state.at <= 0;
   $('down').disabled = state.at >= state.playlist.length - 1;
+  $('screen').classList.toggle('paused', state.paused && !state.onBreak);
   $('paused').classList.toggle('on', state.paused && !state.card && !state.onBreak);
   $('sound').textContent = state.muted ? '\u{1F507}' : '\u{1F50A}';
   $('sound').setAttribute('aria-pressed', String(!state.muted));
 }
 
 // The embedded player takes commands by postMessage (enablejsapi=1).
-function command(func) {
+function command(func, args = []) {
   const frame = $('player').querySelector('iframe');
-  frame?.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: [] }), '*');
+  frame?.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }), '*');
 }
 
 function setPaused(paused) {
@@ -171,6 +215,21 @@ async function postViews(events) {
   }
 }
 
+function onSecond() {
+  if (state.card && state.card.expires_at * 1000 <= Date.now()) {
+    state.card = null;
+    $('overlay').innerHTML = '';
+    setPaused(false);
+    renderMap();
+  }
+  if (state.cooldown && !state.cooldown.done && Date.now() >= state.cooldown.untilMs) {
+    state.cooldown.done = true;
+    state.lastPost = 0;
+  }
+  renderTrendText();
+  heartbeat();
+}
+
 function heartbeat() {
   const due = Date.now() - state.lastPost >= HEARTBEAT_MS;
   if (due && !state.card && !state.onBreak && state.at >= 0 && document.visibilityState === 'visible') postViews([]);
@@ -185,6 +244,8 @@ function offer(card) {
     <div class="opts">${card.options.map((o, i) => `<button type="button" data-i="${i}">${esc(o.label)}</button>`).join('')}</div></div></div>`;
   $('overlay').querySelectorAll('[data-i]').forEach((b) => { b.onclick = () => choose(card.options[Number(b.dataset.i)]); });
   $('overlay').querySelector('button').focus();
+  renderTrendText();
+  renderMap();
 }
 
 async function choose(option) {
@@ -192,7 +253,13 @@ async function choose(option) {
   state.answered.add(card.id);
   state.card = null;
   $('overlay').innerHTML = '';
-  if (option.action === 'leave') takeBreak(); else setPaused(false);
+  if (option.action === 'leave') {
+    takeBreak();
+  } else {
+    state.cooldown = { id: card.id, untilMs: Date.now() + DEFAULT_COOLDOWN_S * 1000, synced: false, done: false };
+    setPaused(false);
+    renderTrendText();
+  }
   await api(`/api/viewers/${state.viewer}/nudges/${encodeURIComponent(card.id)}/response`,
     { method: 'POST', body: JSON.stringify({ choice: option.choice }) }).catch((error) => setStatus(`Answer not saved: ${error.message}`, true));
   tick().catch(() => {});
@@ -212,9 +279,11 @@ function takeBreak() {
 // Back from the break: the same Short plays again (no new view is logged).
 function continueScrolling() {
   state.onBreak = false;
+  state.paused = false;
   $('overlay').innerHTML = '';
   renderPlayer();
   renderPhoneChrome();
+  renderTrendText();
 }
 
 // ---------------------------------------------------------------- tabs: whose view the right side shows
@@ -238,7 +307,10 @@ function onTabKey(event) {
 
 async function reset() {
   await api(`/api/viewers/${state.viewer}`, { method: 'DELETE' }).catch((error) => setStatus(error.message, true));
-  Object.assign(state, { playlist: [...state.script], feed: [], clips: [], drift: null, current: null, signature: '', card: null, onBreak: false });
+  Object.assign(state, {
+    playlist: [...state.script], feed: [], clips: [], drift: null, nudges: [], cooldown: null,
+    current: null, signature: '', card: null, onBreak: false,
+  });
   state.answered.clear();
   resetArrow();
   $('overlay').innerHTML = '';
@@ -321,21 +393,45 @@ const LEVEL_STROKE = { learning: 'var(--faint)', normal: 'var(--mut)', watch: 'v
 
 function renderSignals(drift, nudges) {
   state.drift = drift;
+  state.nudges = nudges;
+  syncCooldown(nudges);
   $('trend').className = `panel ${LEVEL_CLASS[drift?.level] ?? 'quiet'}`;
   const status = drift ? trendStatus(drift, nudges[0]) : 'No drift report yet';
-  $('trend').innerHTML = `<div class="what"><b>Trend: drift towards low mood</b><span>${status}</span></div>${drift ? sparkline(drift, nudges) : ''}`;
+  $('trend').innerHTML = `<div class="what"><b>Trend: drift towards low mood</b><span id="trend-status">${esc(status)}</span></div>${drift ? sparkline(drift, nudges) : ''}`;
   $('nudges').innerHTML = nudges.length ? nudges.map((n) => nudgeRow(n, drift)).join('') : `<div class="none">None yet. A check-in is sent when the drift passes the ${drift?.config.warn ?? 1} SD alarm.</div>`;
   $('tab-badge').hidden = !nudges.length;
   $('tab-badge').textContent = `${nudges.length} check-in${nudges.length === 1 ? '' : 's'}`;
 }
 
+function syncCooldown(nudges) {
+  const latest = nudges[0];
+  if (!latest || latest.cooldown_remaining_s <= 0) { state.cooldown = null; return; }
+  if (state.cooldown?.id === latest.nudge.id && state.cooldown.synced) return;
+  state.cooldown = { id: latest.nudge.id, untilMs: Date.now() + latest.cooldown_remaining_s * 1000, synced: true, done: false };
+}
+
+function cooldownSeconds() {
+  if (!state.cooldown || state.onBreak) return 0;
+  return Math.max(0, Math.ceil((state.cooldown.untilMs - Date.now()) / 1000));
+}
+
+function renderTrendText() {
+  const node = $('trend-status');
+  if (node && state.drift) node.textContent = trendStatus(state.drift, state.nudges[0]);
+}
+
 // One line that ties the drift to its consequence: past the alarm line, a check-in goes out.
 function trendStatus(d, latest) {
-  const n = d.recent.n, sd = (d.score ?? 0).toFixed(1), alarm = d.config.warn;
+  const n = d.recent.n;
   if (d.level === 'learning') return `Collecting Shorts: ${n} of ${Math.ceil(d.config.window / 2)} analysed`;
-  if (d.level !== 'warning') return `${sd} SD, last ${n} Shorts (alarm at ${alarm} SD)`;
-  const sent = latest ? `, check-in sent ${hhmm(latest.nudge.created_at)}` : ', check-in on its way';
-  return `Warning: ${sd} SD, past the ${alarm} SD alarm${sent}`;
+  const wait = cooldownSeconds();
+  if (d.level !== 'warning') return `${LEVEL_TITLE[d.level]}, last ${n} Shorts${wait ? ` · check-in cooldown ${mmss(wait)}` : ''}`;
+  if (wait) return latest ? `Warning: check-in sent ${hhmm(latest.nudge.created_at)} · cooldown ${mmss(wait)}` : `Warning: check-in cooldown ${mmss(wait)}`;
+  if (state.card || latest?.state === 'open' || (state.onBreak && latest)) {
+    const at = latest ? latest.nudge.created_at : Date.now() / 1000;
+    return `Warning: check-in sent ${hhmm(at)}`;
+  }
+  return 'Warning: check-in on its way';
 }
 
 // Drift after each judged Short, the alarm line, and a dotted mark where each check-in was sent.
@@ -364,11 +460,11 @@ function sparkline(d, nudges) {
 const EXAMPLE_HISTORY = [
   { daysAgo: 13, at: '22:41', sd: 1.3, answer: 'Not now' },
   { daysAgo: 11, at: '23:05', sd: 1.6, answer: 'I want to take a break' },
-  { daysAgo: 9, at: '21:52', sd: 1.2, answer: "I'm OK" },
+  { daysAgo: 9, at: '21:52', sd: 1.2, answer: 'I am okay' },
   { daysAgo: 6, at: '00:14', sd: 2.1, answer: 'I want to take a break' },
   { daysAgo: 6, at: '00:58', sd: 2.4, answer: null },
   { daysAgo: 4, at: '23:37', sd: 1.8, answer: 'I want to take a break' },
-  { daysAgo: 2, at: '22:20', sd: 1.4, answer: "I'm OK" },
+  { daysAgo: 2, at: '22:20', sd: 1.4, answer: 'I am okay' },
   { daysAgo: 1, at: '23:49', sd: 2.6, answer: 'I want to take a break' },
 ];
 
@@ -473,27 +569,46 @@ function dot({ clip, x, y }) {
     <circle cx="${x}" cy="${y}" r="${current ? 6.5 : 5}" fill="${current ? 'var(--acc)' : 'var(--mut)'}" stroke="var(--card)" stroke-width="1.5" opacity="${current ? 1 : 0.7}"/></g>`;
 }
 
+function checkinActive() {
+  if (state.card) return true;
+  if (state.drift?.level !== 'warning' || !state.nudges.length) return false;
+  const tl = state.drift.timeline;
+  const calm = tl.findLastIndex((p) => p.level !== 'warning');
+  const since = calm >= 0 ? tl[calm].seen_at - 2 : 0;
+  return state.nudges.some((n) => n.nudge.created_at >= since);
+}
+
 function normalOverlay() {
   const n = state.drift?.affect_baseline;
   if (!n) return '';
   const cx = affectX(n.centre.valence), cy = affectY(n.centre.arousal);
   const rx = ELLIPSE_SD * n.sd.valence * GEO.PW / 5, ry = ELLIPSE_SD * n.sd.arousal * GEO.PH / 5;
+  const active = checkinActive();
   const ellipse = `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="var(--card)" stroke="var(--mut)" stroke-dasharray="5 4"><title>Normal range: typical affect of English words (${esc(n.cite)}), centre plus or minus 1 SD</title></ellipse>
     <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="var(--acc)" fill-opacity=".05" pointer-events="none"/>`;
   const label = `<text x="${cx}" y="${cy - ry - 5}" text-anchor="middle">typical</text>`;
-  return lowMoodQuadrant(cx, cy) + ellipse + label + driftArrow(cx, cy);
+  return lowMoodQuadrant(cx, cy, active) + ellipse + zoneForeground(cx, cy, rx, ry, active) + label + driftArrow(cx, cy);
 }
 
 // The warning zone: below the norm on both axes. The ellipse drawn over it leaves the part
 // beyond 1 SD tinted, which is exactly where a drift counts as a warning.
-function lowMoodQuadrant(cx, cy) {
+function lowMoodQuadrant(cx, cy, active) {
   const { L, T, PH } = GEO;
   const bottom = T + PH;
   return `<g pointer-events="none"><title>Low-mood zone: lower valence and lower arousal than typical</title>
-    <rect x="${L}" y="${cy}" width="${cx - L}" height="${bottom - cy}" fill="var(--warn)" fill-opacity=".07"/>
-    <line x1="${L}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="var(--warn)" stroke-opacity=".55" stroke-dasharray="2 4" stroke-width="1.5"/>
-    <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${bottom}" stroke="var(--warn)" stroke-opacity=".55" stroke-dasharray="2 4" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${bottom - 8}" style="fill:var(--warn)">depressive signal zone</text></g>`;
+    <rect x="${L}" y="${cy}" width="${cx - L}" height="${bottom - cy}" fill="var(--warn)" fill-opacity="${active ? .22 : .07}"/>
+    <line x1="${L}" y1="${cy}" x2="${cx}" y2="${cy}" stroke="var(--warn)" stroke-opacity="${active ? .85 : .55}" stroke-dasharray="2 4" stroke-width="1.5"/>
+    <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${bottom}" stroke="var(--warn)" stroke-opacity="${active ? .85 : .55}" stroke-dasharray="2 4" stroke-width="1.5"/></g>`;
+}
+
+// Drawn above the ellipse so the outline frames the exact region beyond 1 SD when a check-in is sent.
+function zoneForeground(cx, cy, rx, ry, active) {
+  const { L, T, PH } = GEO;
+  const bottom = T + PH;
+  const border = active
+    ? `<path d="M ${L} ${cy} H ${cx - rx} A ${rx} ${ry} 0 0 0 ${cx} ${cy + ry} V ${bottom} H ${L} Z" fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-linejoin="round" pointer-events="none"/>`
+    : '';
+  return `${border}<text x="${L + (active ? 8 : 6)}" y="${bottom - 8}" style="fill:var(--warn)${active ? ';font-weight:700' : ''}" pointer-events="none">depressive signal zone</text>`;
 }
 
 // The arrow glides from where it was drawn last to the new average (and fades to the new level's
@@ -548,6 +663,7 @@ function placeArrow(tip) {
 
 // ---------------------------------------------------------------- wiring
 
+window.addEventListener('message', onPlayerMessage);
 $('touch').addEventListener('wheel', onWheel, { passive: false });
 $('touch').addEventListener('pointerdown', (event) => { state.pointer = event.clientY; });
 $('touch').addEventListener('pointerup', onPointerUp);
