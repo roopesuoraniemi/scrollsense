@@ -34,14 +34,14 @@ class DriftConfig(Frozen):
     """The recent window (counted in analysed Shorts) and the affect-score thresholds, in norm
     SDs of drift into the bottom-left quadrant.
 
-    `window` defaults to 10, for a quick demo. No level is given until the window holds
+    `window` defaults to 5, for a quick demo. No level is given until the window holds
     at least `min_recent` Shorts, half of `window`. Both thresholds default to 1 SD, so affect
     goes straight from normal to warning; neither may be below 1 SD, the edge of the normal
     range. A higher `warn` brings back an affect `watch` band. Raises ValueError unless
     watch <= warn.
     """
 
-    window: int = Field(default=10, ge=1)
+    window: int = Field(default=5, ge=1)
     watch: float = Field(default=1.0, ge=1.0)
     warn: float = Field(default=1.0, ge=1.0)
 

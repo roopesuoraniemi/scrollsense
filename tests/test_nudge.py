@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.drift.core import DriftDetector, DriftReport, TimelinePoint
 from scrollsense.drift_api import FeedObserver, ViewerDrift
+from scrollsense.scheduling import CachedScheduler
 from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.nudge import (AlreadyAnswered, BadChoice, Nudge, NudgeEntry, NudgeHistory,
                                NudgePolicy, NudgeResponse, NudgeSettings, warning_streak)
@@ -64,18 +65,24 @@ def test_support_nudge_on_the_first_warning() -> None:
     assert nudge.card.kind == "support" and nudge.video_id is None
     assert nudge.card.title == "How do these videos feel right now?"
     assert [o.choice for o in nudge.card.options] == ["ok", "take_break", "not_now"]
+    assert [o.label for o in nudge.card.options] == [
+        "I am okay", "I want to take a break", "Not now"]
     assert nudge.card.expires_at == NOW + 900
     patient_text = nudge.card.model_dump_json().lower()
     assert not any(word in patient_text for word in CLINICAL_WORDS)
 
 
-def test_cooldown_and_im_ok_doubling() -> None:
+def test_cooldown_after_answer_and_optional_ok_factor() -> None:
     earlier = issued(POLICY, (SAD, SAD, SAD), NOW)
     sad = report(SAD, SAD, SAD)
-    assert POLICY.decide(sad, history(earlier, "not_now"), NOW + 599) is None
-    assert POLICY.decide(sad, history(earlier, "not_now"), NOW + 600) is not None
-    assert POLICY.decide(sad, history(earlier, "ok"), NOW + 1199) is None
-    assert POLICY.decide(sad, history(earlier, "ok"), NOW + 1200) is not None
+    # `history` records the answer at `created_at + 1`, so a 900 s cooldown ends at `NOW + 901`.
+    assert POLICY.decide(sad, history(earlier, "not_now"), NOW + 900) is None
+    assert POLICY.decide(sad, history(earlier, "not_now"), NOW + 901) is not None
+    assert POLICY.decide(sad, history(earlier, "ok"), NOW + 900) is None
+    assert POLICY.decide(sad, history(earlier, "ok"), NOW + 901) is not None
+    doubled = NudgePolicy(NudgeSettings(ok_factor=2.0))
+    assert doubled.decide(sad, history(earlier, "ok"), NOW + 1800) is None
+    assert doubled.decide(sad, history(earlier, "ok"), NOW + 1801) is not None
 
 
 def test_an_open_nudge_blocks_a_new_one_until_it_expires() -> None:
@@ -165,7 +172,7 @@ def routers(tmp_path: Path) -> tuple[APIRouter, ...]:
                           Pacer(0.0, time.monotonic, no_wait))
     drift = ViewerDrift(FeedObserver(log, store), DriftDetector(SMALL, NORM))
     desk = NudgeDesk(JsonlNudgeLog(tmp_path / "views"), NudgeJudge(drift, POLICY), lambda: NOW)
-    views = ViewsApi(ViewIntake(log, queue, ViewerExtras(desk)),
+    views = ViewsApi(ViewIntake(log, CachedScheduler(queue), ViewerExtras(desk)),
                      ViewerReports(log, store, queue))
     return views.router(), NudgeApi(desk).router()
 
@@ -211,6 +218,7 @@ def test_answered_nudge_leaves_the_receipt_and_shows_in_history(client: TestClie
     assert client.post("/api/views", json=shorts(10)).json()["nudge"] is None
     [item] = client.get("/api/viewers/patient-01/nudges").json()
     assert item["state"] == "answered" and item["response"]["choice"] == "take_break"
+    assert item["cooldown_remaining_s"] == 900.0
     assert item["nudge"]["card"] == card and item["nudge"]["reason"].startswith("Drift warning")
     assert "SD into the bottom left" in item["nudge"]["reason"]
 

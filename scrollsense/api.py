@@ -8,7 +8,10 @@ from .service import AnalysisService
 
 
 class Meta(Frozen):
+    """`live`: each viewer's first view of a Short starts a fresh analysis."""
+
     analyser: AnalyserLabel
+    live: bool = False
 
 
 class ClipSummary(Frozen):
@@ -62,9 +65,10 @@ class ClipCatalog:
 class Api:
     """Routes for the web UI. `router()` builds a fresh router bound to this instance."""
 
-    def __init__(self, service: AnalysisService, catalog: ClipCatalog) -> None:
+    def __init__(self, service: AnalysisService, catalog: ClipCatalog, live: bool = False) -> None:
         self.__service = service
         self.__catalog = catalog
+        self.__live = live
 
     def router(self) -> APIRouter:
         router = APIRouter(prefix="/api")
@@ -74,7 +78,7 @@ class Api:
         return router
 
     def meta(self) -> Meta:
-        return Meta(analyser=self.__service.label)
+        return Meta(analyser=self.__service.label, live=self.__live)
 
     def clips(self) -> list[ClipSummary]:
         return self.__catalog.summaries()

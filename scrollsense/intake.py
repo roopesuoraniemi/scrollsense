@@ -1,13 +1,14 @@
 """Accepting batches of view events: validate, dedupe against the log, record, queue analysis,
 and offer any nudge that is due."""
+from collections.abc import Sequence
 from dataclasses import dataclass
 from threading import Lock
 
-from .analysis_queue import AnalysisQueue
 from .nudge import NudgeCard
 from .ports import Nudger, ViewLog
+from .scheduling import AnalysisScheduler
 from .schemas import Frozen
-from .views import EVER, Rejection, ViewBatch, ViewerId, fresh, parse_events
+from .views import EVER, Rejection, ViewBatch, ViewerId, ViewEvent, fresh, parse_events
 
 
 class Receipt(Frozen):
@@ -30,11 +31,12 @@ class ViewerExtras:
 
 
 class ViewIntake:
-    """Records client batches. Only `shorts` events are analysed; the rest are just logged."""
+    """Records client batches. Only `shorts` events are analysed (as `scheduler` decides); the
+    rest are just logged."""
 
-    def __init__(self, log: ViewLog, queue: AnalysisQueue, extras: ViewerExtras) -> None:
+    def __init__(self, log: ViewLog, scheduler: AnalysisScheduler, extras: ViewerExtras) -> None:
         self.__log = log
-        self.__queue = queue
+        self.__scheduler = scheduler
         self.__extras = extras
         self.__lock = Lock()
 
@@ -48,12 +50,22 @@ class ViewIntake:
         viewer = ViewerId(batch.viewer)
         parsed = parse_events(viewer, batch.events)
         with self.__lock:
-            new = fresh(self.__log.between(viewer, EVER), parsed.events)
+            logged = self.__log.between(viewer, EVER)
+            new = fresh(logged, parsed.events)
             self.__log.append(new)
-        queued = [self.__queue.enqueue_if_new(e.video) for e in new if e.surface == "shorts"]
-        nudge = self.__extras.nudges.issue_if_due(viewer)
+        queued = self.__schedule(viewer, logged, new)
         return Receipt(accepted=len(new), duplicates=len(parsed.events) - len(new),
-                       queued=sum(queued), rejected=parsed.rejected, nudge=nudge)
+                       queued=queued, rejected=parsed.rejected,
+                       nudge=self.__extras.nudges.issue_if_due(viewer))
+
+    def __schedule(self, viewer: ViewerId, logged: Sequence[ViewEvent],
+                   new: Sequence[ViewEvent]) -> int:
+        seen = {e.video_id for e in logged}
+        queued = 0
+        for event in (e for e in new if e.surface == "shorts"):
+            queued += self.__scheduler.viewed(viewer, event.video, event.video_id not in seen)
+            seen.add(event.video_id)
+        return queued
 
     def erase(self, viewer: ViewerId) -> None:
         """Delete `viewer`'s view log and nudges (GDPR erasure); waits for any batch

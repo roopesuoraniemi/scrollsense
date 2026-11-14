@@ -127,16 +127,16 @@ def test_config_from_env_and_validation() -> None:
     config = DriftConfig.from_env({"SCROLLSENSE_DRIFT_WINDOW": "7", "SCROLLSENSE_DRIFT_WARN": "2.5",
                                    "SCROLLSENSE_BASELINE_N": "20"})
     assert (config.window, config.warn, config.min_recent) == (7, 2.5, 4)
-    assert (DriftConfig().window, DriftConfig().min_recent) == (10, 5)
+    assert (DriftConfig().window, DriftConfig().min_recent) == (5, 3)
     with pytest.raises(ValueError):
         DriftConfig.from_env({"SCROLLSENSE_DRIFT_WATCH": "2", "SCROLLSENSE_DRIFT_WARN": "1"})
 
 
 def test_learning_only_until_half_the_window_and_heavy_from_the_start_is_flagged() -> None:
-    early = judge([SAD] * 4, DriftConfig())
-    assert (early.level, early.note) == ("learning", "Collecting recent Shorts: 4/5 analysed")
+    early = judge([SAD] * 2, DriftConfig())
+    assert (early.level, early.note) == ("learning", "Collecting recent Shorts: 2/3 analysed")
     assert early.score is not None and judge([], DriftConfig()).score is None
-    assert judge([SAD] * 5, DriftConfig()).level == "warning"
+    assert judge([SAD] * 3, DriftConfig()).level == "warning"
 
 
 def test_reasons_and_note_of_a_warning() -> None:

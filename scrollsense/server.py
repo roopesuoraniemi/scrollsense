@@ -15,6 +15,8 @@ from .api import Api, ClipCatalog
 from .affect_norms import load_affect_norms
 from .auth import BearerToken
 from .composition import ROOT, Settings, Wiring, wire
+from .demo_api import DemoApi, ShortAdder
+from .scheduling import AnalysisScheduler, CachedScheduler, LiveScheduler
 from .drift.core import DriftDetector
 from .drift_api import DriftApi, FeedObserver, ViewerDrift
 from .intake import ViewerExtras, ViewIntake
@@ -46,13 +48,20 @@ class FreshStaticFiles(StaticFiles):
 
 
 def __routers(wiring: Wiring, settings: Settings) -> list[APIRouter]:
-    observer = FeedObserver(wiring.views, wiring.store)
+    observer = FeedObserver(wiring.views, wiring.store, wiring.queue)
+    scheduler = __scheduler(wiring, settings)
     drift = ViewerDrift(observer, DriftDetector(settings.drift, load_affect_norms().baseline))
     desk = NudgeDesk(wiring.nudges, NudgeJudge(drift, NudgePolicy(settings.nudge)), time.time)
-    views = ViewsApi(ViewIntake(wiring.views, wiring.queue, ViewerExtras(desk)),
+    views = ViewsApi(ViewIntake(wiring.views, scheduler, ViewerExtras(desk)),
                      ViewerReports(wiring.views, wiring.store, wiring.queue))
-    return [Api(wiring.service, ClipCatalog(wiring.store)).router(), views.router(),
-            DriftApi(drift).router(), NudgeApi(desk).router()]
+    return [Api(wiring.service, ClipCatalog(wiring.store), settings.live).router(), views.router(),
+            DriftApi(drift).router(), NudgeApi(desk).router(),
+            DemoApi(ShortAdder(scheduler, wiring.queue, wiring.store)).router()]
+
+
+def __scheduler(wiring: Wiring, settings: Settings) -> AnalysisScheduler:
+    kind = LiveScheduler if settings.live else CachedScheduler
+    return kind(wiring.queue)
 
 
 def __guard(token: str | None) -> list[Dependency]:

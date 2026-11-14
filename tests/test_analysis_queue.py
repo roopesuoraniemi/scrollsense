@@ -54,3 +54,22 @@ def test_pacer_spaces_starts() -> None:
         pacer.wait_turn()
     assert sleeps == [0.0, 3.0, 6.0]
     assert Pacer.per_minute(0) is not None
+
+
+def test_enqueue_fresh_reruns_a_stored_video() -> None:
+    store = MemoryStore()
+    AnalysisService(instant_mock(), store, lambda: 1.0).run(AnalysisRequest(video=A), lambda stage: None)
+    queue = queue_with(instant_mock(), store)
+    assert [queue.enqueue_fresh(A), queue.enqueue_fresh(A)] == [True, False]
+    assert queue.state_of(A) == "queued"
+    queue.start(1)
+    drain(queue)
+    assert store.load(A).created > 1.0
+
+
+def test_enqueue_fresh_retries_a_failure() -> None:
+    queue = queue_with(FailingDescribeAnalyser(delay_s=0), MemoryStore())
+    queue.start(1)
+    queue.enqueue_if_new(A)
+    drain(queue)
+    assert queue.enqueue_fresh(A) is True

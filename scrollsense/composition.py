@@ -63,6 +63,7 @@ class Settings:
     queue: QueueConfig
     drift: DriftConfig
     nudge: NudgeSettings
+    live: bool
 
     @classmethod
     def from_env(cls, root: Path) -> "Settings":
@@ -76,7 +77,8 @@ class Settings:
         return cls(mock=mock, gemini=gemini, data_dir=dirs.clips, views_dir=dirs.views,
                    token=os.getenv("SCROLLSENSE_TOKEN") or None, queue=QueueConfig.from_env(),
                    drift=DriftConfig.from_env(os.environ),
-                   nudge=NudgeSettings.from_env(os.environ))
+                   nudge=NudgeSettings.from_env(os.environ),
+                   live=os.getenv("SCROLLSENSE_LIVE_INFERENCE") == "1")
 
 
 @dataclass(frozen=True)

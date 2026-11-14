@@ -6,11 +6,15 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
+from scrollsense.domain import AnalysisRequest, VideoId
+from scrollsense.drift_api import FeedObserver
 from scrollsense.auth import BearerToken
+from scrollsense.scheduling import CachedScheduler, LiveScheduler
 from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
 from scrollsense.viewlog import JsonlViewLog
+from scrollsense.views import ViewBatch, ViewerId
 from scrollsense.views_api import ViewerReports, ViewsApi
 
 from .fakes import NoNudges, instant_mock, no_wait
@@ -25,7 +29,7 @@ def app(tmp_path: Path, token: str | None) -> FastAPI:
     queue = AnalysisQueue(AnalysisService(instant_mock(), store, time.time), store,
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
-    api = ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())), ViewerReports(log, store, queue))
+    api = ViewsApi(ViewIntake(log, CachedScheduler(queue), ViewerExtras(NoNudges())), ViewerReports(log, store, queue))
     built = FastAPI()
     built.include_router(api.router(), dependencies=[Depends(BearerToken(token))] if token else [])
     return built
@@ -98,3 +102,15 @@ def test_token_is_required_when_set(tmp_path: Path) -> None:
     assert client.get("/api/queue").status_code == 401
     assert client.get("/api/queue", headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get("/api/queue", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+
+
+def test_a_live_rerun_hides_the_stored_result_until_done(tmp_path: Path) -> None:
+    store, log = JsonFileStore(tmp_path / "clips"), JsonlViewLog(tmp_path / "views")
+    service = AnalysisService(instant_mock(), store, time.time)
+    service.run(AnalysisRequest(VideoId("aaaaaaaaaaa")), lambda stage: None)
+    queue = AnalysisQueue(service, store, Pacer(0.0, time.monotonic, no_wait))   # not started
+    intake = ViewIntake(log, LiveScheduler(queue), ViewerExtras(NoNudges()))
+    intake.record(ViewBatch.model_validate(batch("demo-ann", "aaaaaaaaaaa")))
+    assert ViewerReports(log, store, queue).feed(ViewerId("demo-ann"), 10)[0].state == "queued"
+    observed = FeedObserver(log, store, queue).observed(ViewerId("demo-ann"))
+    assert observed.analysed == () and observed.pending == 1
