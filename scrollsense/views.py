@@ -123,11 +123,37 @@ class ViewInput(Frozen):
                          **self.model_dump(exclude={"video_id", "url"}))
 
 
+class ActiveWatch(Frozen):
+    """The Short currently on screen on a viewer's device before they swipe away."""
+
+    video_id: str
+    started_at: float
+    tz_offset_min: int = 0
+
+    @field_validator("video_id")
+    @classmethod
+    def __video_id(cls, value: str) -> str:
+        return VideoId.parse(value).value
+
+    @property
+    def video(self) -> VideoId:
+        return VideoId(self.video_id)
+
+    def as_event(self, viewer: ViewerId, now: float) -> ViewEvent:
+        """Transient in-progress ViewEvent so the live dashboard shows a Short before swipe-out."""
+        dwell = round(max(0.0, now - self.started_at), 1)
+        return ViewEvent(event_id=f"live-{self.video_id}-{int(self.started_at)}",
+                         viewer=viewer.value, video_id=self.video_id, seen_at=self.started_at,
+                         tz_offset_min=self.tz_offset_min, dwell_s=dwell)
+
+
 class ViewBatch(Frozen):
-    """A client's flush: events for one viewer."""
+    """A client's flush: completed events for one viewer, plus optional active Short."""
 
     viewer: str
-    events: tuple[ViewInput, ...]
+    events: tuple[ViewInput, ...] = ()
+    watching: ActiveWatch | None = None
+    paused: bool = False
 
 
 class Rejection(Frozen):

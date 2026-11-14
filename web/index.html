@@ -1,86 +1,209 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ScrollSense POC</title>
-<style>
-:root{--bg:#f6f5f2;--card:#fff;--ink:#1f1e1c;--mut:#6b6a66;--line:#e3e1db;--acc:#534AB7;--acc-bg:#EEEDFE;
---warm:#D85A30;--cool:#378ADD;--ok:#1D9E75;--danger:#A32D2D;--danger-bg:#FCEBEB;--seg:#ecebe6}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#21201e;--ink:#ecebe6;--mut:#a3a19a;--line:#35342f;
---acc:#AFA9EC;--acc-bg:#2c2858;--danger:#F09595;--danger-bg:#3a1a1a;--seg:#33322d}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-header h1{font-size:18px;font-weight:600;margin:0}
-.badge{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--acc-bg);color:var(--acc)}
-.badge.mock{background:#FAEEDA;color:#854F0B}
-form{display:flex;gap:8px;padding:14px 20px;flex-wrap:wrap;align-items:center}
-input[type=text]{flex:1;min-width:240px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
-button{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;cursor:pointer}
-button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
-@media (prefers-color-scheme:dark){button.primary{color:#1b1840}}
-button.on{border-color:var(--acc);color:var(--acc)}
-#status{font-size:13px;color:var(--mut)}
-#status.err{color:var(--danger)}
-#list{display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 8px}
-select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
-#list button.queued,#list button.pending{border-style:dashed;color:var(--mut)}
-#list button.failed{color:var(--danger)}
-#list button{font-size:12px;padding:4px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-main{display:grid;grid-template-columns:minmax(260px,330px) minmax(0,1fr) minmax(0,1fr);gap:16px;padding:8px 20px 28px}
-@media (max-width:1100px){main{grid-template-columns:minmax(260px,330px) minmax(0,1fr)}#col3{grid-column:1/-1}}
-@media (max-width:700px){main{grid-template-columns:minmax(0,1fr)}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
-.card h2{font-size:14px;font-weight:600;margin:0 0 10px;display:flex;align-items:center;gap:8px}
-.card h2 .step{font-size:11px;font-weight:500;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 6px}
-.video{position:relative;width:100%;max-width:330px;margin:0 auto;aspect-ratio:9/16;border-radius:10px;overflow:hidden;background:#000}
-.video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-.empty{color:var(--mut);font-size:14px;padding:24px 0;text-align:center}
-dl{margin:0}dt{font-size:12px;color:var(--mut);margin-top:10px}dd{margin:2px 0 0;white-space:pre-wrap}
-dd.scroll{max-height:160px;overflow:auto;border-left:2px solid var(--line);padding-left:10px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
-.chip{font-size:12px;padding:2px 8px;border-radius:6px;border:1px solid var(--line)}
-.toggle{display:flex;gap:6px;margin-bottom:8px}.toggle button{font-size:12px;padding:4px 10px}
-svg text{font:11px system-ui,sans-serif;fill:var(--mut)}
-.note{font-size:12px;color:var(--mut);margin:6px 0 0}
-.row{display:grid;grid-template-columns:34px minmax(0,1fr) 120px 22px;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
-.row:last-child{border-bottom:0}.row .code{font-size:12px;color:var(--mut)}
-.bar{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}.bar i{height:10px;border-radius:3px;background:var(--seg)}
-.bar i.f{background:var(--acc)}.row.a9 .bar i.f{background:var(--danger)}
-.total{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}.total b{font-size:28px;font-weight:600}
-.safety{background:var(--danger-bg);color:var(--danger);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:10px}
-.mockbanner{background:#FAEEDA;color:#854F0B}
-blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);background:var(--bg);border-radius:0 8px 8px 0;font-size:14px}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ScrollSense — Feed Telemetry &amp; Maintenance Loop</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header>
-  <h1>ScrollSense</h1><span class="badge" id="mode">…</span>
-  <span style="font-size:13px;color:var(--mut)">Live: the Shorts scrolled on the phone → text package → embedded space → DSM-5 themes. Not a diagnostic tool.</span>
-</header>
-<form id="f" onsubmit="return false">
-  <label style="font-size:13px;color:var(--mut)">Viewer <select id="viewer" aria-label="Viewer"></select></label>
-  <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="follow" checked> Follow live</label>
-  <span id="status" role="status"></span>
-</form>
-<div id="list" aria-label="Analysed clips"></div>
-<main>
-  <section>
-    <div class="card"><h2><span class="step">1</span>Original video</h2><div id="video"><div class="empty">Scroll Shorts on the phone: they appear here live.</div></div></div>
-  </section>
-  <section>
-    <div class="card"><h2><span class="step">2</span>Generated text package</h2><div id="pkg"><div class="empty">No clip selected.</div></div></div>
-  </section>
-  <section id="col3">
-    <div class="card"><h2><span class="step">3</span>Point in embedded space</h2>
-      <div class="toggle"><button id="tAff" class="on" type="button">Affect space</button><button id="tSem" type="button">Semantic space</button></div>
-      <svg id="map" viewBox="0 0 360 330" width="100%" role="img" aria-label="Map of analysed clips"></svg>
-      <p class="note" id="mapnote"></p>
+  <header class="topbar">
+    <div class="brand-group">
+      <h1 class="brand">ScrollSense</h1>
+      <span class="pill" id="mode">Connecting…</span>
+      <span class="pill queue-pill" id="queuePill" title="Background analysis queue">Queue idle</span>
     </div>
-    <div class="card"><h2><span class="step">4</span>DSM-5 theme scores</h2><div id="dsm"><div class="empty">No clip selected.</div></div></div>
+
+    <div class="controls-group">
+      <label class="field-inline" for="viewer">
+        Viewer
+        <select id="viewer" aria-label="Viewer pseudonym"></select>
+      </label>
+
+      <label class="field-inline" for="control">
+        Control
+        <select id="control" aria-label="Control viewer"></select>
+      </label>
+
+      <label class="field-inline" for="windowPreset">
+        Window
+        <select id="windowPreset" aria-label="Comparison window">
+          <option value="24h">Last 24h vs prior</option>
+          <option value="2h">Last 2h vs prior</option>
+          <option value="split">Recent half vs earlier</option>
+        </select>
+      </label>
+
+      <div class="seg" role="tablist" aria-label="Workspace view">
+        <button id="tabInspect" class="on" type="button" role="tab" aria-selected="true">Clip inspector</button>
+        <button id="tabLoop" type="button" role="tab" aria-selected="false">Drift &amp; home loop</button>
+      </div>
+
+      <button id="btnPair" type="button" title="Pair phone userscript or configure Bearer token">Pair phone</button>
+      <button id="btnSeed" type="button" title="Populate sample baseline-to-drift scenario">Sample feed</button>
+      <button id="btnTheme" class="ghost" type="button" title="Switch light or dark theme" aria-label="Toggle colour theme">Theme</button>
+    </div>
+  </header>
+
+  <section class="subbar" aria-label="Feed intake and stream">
+    <div class="intake-row">
+      <form class="url-form" id="urlForm">
+        <label class="hidden" for="urlInput">YouTube Shorts URL or video ID</label>
+        <input id="urlInput" type="text" placeholder="Add YouTube Shorts URL or 11-char ID…" autocomplete="off" aria-label="YouTube Shorts URL or 11-character ID">
+        <button class="primary" type="submit">Log Short</button>
+      </form>
+
+      <label class="check-inline" for="follow">
+        <input type="checkbox" id="follow" checked>
+        Follow live
+      </label>
+
+      <span id="status" role="status" aria-live="polite"></span>
+    </div>
+
+    <div class="stream" id="list" role="region" aria-label="Scrolled Shorts stream"></div>
   </section>
-</main>
-<script src="app.js"></script>
+
+  <div class="safety-global hidden" id="safetyGlobal" role="alert"></div>
+
+  <main class="workspace">
+    <!-- View 1: 4-Stage Multimodal Clip Inspector -->
+    <div id="viewInspect" class="inspector-grid">
+      <section>
+        <div class="panel">
+          <div class="panel-head">
+            <h2><span class="step-num">1</span>Watched Short</h2>
+            <button id="btnRerun" class="ghost hidden" type="button" title="Force fresh analysis ignoring cache">Re-analyse</button>
+          </div>
+          <div id="video">
+            <div class="empty-state">
+              Scroll Shorts on a paired phone, paste a URL above, or load the sample feed.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="panel">
+          <div class="panel-head">
+            <h2><span class="step-num">2</span>Creator-neutral text package</h2>
+          </div>
+          <div id="pkg">
+            <div class="empty-state">Select or log a Short to inspect Stage-1 extraction.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="col-wide">
+        <div class="panel">
+          <div class="panel-head">
+            <h2><span class="step-num">3</span>Affect &amp; semantic space</h2>
+            <div class="seg" role="group" aria-label="Embedding projection">
+              <button id="tAff" class="on" type="button">Affect circumplex</button>
+              <button id="tSem" type="button">Semantic 2-D PCA</button>
+            </div>
+          </div>
+          <svg id="map" class="plot" viewBox="0 0 380 340" width="100%" role="img" aria-label="2-D projection of analysed Shorts"></svg>
+          <p class="note" id="mapnote"></p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2><span class="step-num">4</span>DSM-5 content theme scores</h2>
+          </div>
+          <div id="dsm">
+            <div class="empty-state">Select a scored Short to view A1–A9 content theme load and stance.</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- View 2: Longitudinal Baseline Drift & Double Closed Loop -->
+    <div id="viewLoop" class="hidden">
+      <div id="clusterStrip" class="cluster-strip" aria-label="Symptom exposure clusters"></div>
+
+      <div class="loop-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Current window vs personal baseline</h2>
+            <span class="note" id="windowNote" style="margin:0"></span>
+          </div>
+          <div id="metricsTable"></div>
+        </section>
+
+        <section>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Chronological exposure trajectory</h2>
+              <span class="note" style="margin:0">Rolling exposure window</span>
+            </div>
+            <svg id="trajChart" class="plot" viewBox="0 0 420 190" width="100%" role="img" aria-label="Exposure trajectory chart"></svg>
+            <p class="note" id="trajNote"></p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Home companion &amp; recommender re-seed</h2>
+              <span class="level-badge stable" id="triageBadge">Stable</span>
+            </div>
+            <div id="loopPanel"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:16px">
+        <div class="panel-head">
+          <h2>Supporting clip evidence (<span id="evidenceScope">all current exposures</span>)</h2>
+          <button id="btnClearFilter" class="ghost hidden" type="button">Show all evidence</button>
+        </div>
+        <div id="evidenceList"></div>
+      </section>
+
+      <footer class="footer-bar">
+        <span>Content-exposure telemetry for research prototyping — describes served media themes, never diagnoses a person.</span>
+        <div>
+          <button id="btnErase" class="danger-btn" type="button">Erase viewer log (GDPR)</button>
+        </div>
+      </footer>
+    </div>
+  </main>
+
+  <!-- Phone Pairing & Bearer Token Modal -->
+  <dialog id="pairModal" class="modal" aria-labelledby="pairTitle">
+    <form method="dialog" id="pairForm">
+      <h2 id="pairTitle" style="margin:0;font-size:16px">Pair phone userscript &amp; server auth</h2>
+      <p class="note">Install the userscript in Violentmonkey (Firefox Android) or Userscripts (iOS Safari), then open the one-tap pairing link on the phone.</p>
+
+      <div class="modal-field">
+        <label for="pairEndpoint">Server URL (use your HTTPS tunnel URL for a phone)</label>
+        <input id="pairEndpoint" type="text" autocomplete="off">
+      </div>
+
+      <div class="modal-field">
+        <label for="pairToken">Bearer token (SCROLLSENSE_TOKEN, blank if open)</label>
+        <input id="pairToken" type="password" autocomplete="off" placeholder="Optional server token">
+      </div>
+
+      <div class="modal-field">
+        <label for="pairViewer">Viewer pseudonym ([a-z0-9-]{3,32})</label>
+        <input id="pairViewer" type="text" autocomplete="off" value="patient-01">
+      </div>
+
+      <div class="modal-field">
+        <label for="pairLink">1. Install script · 2. Open one-tap pairing URL on phone</label>
+        <p class="note" style="margin:0 0 4px">
+          Script: <a id="scriptInstallLink" href="/scrollsense.user.js" target="_blank" rel="noopener">/scrollsense.user.js</a>
+        </p>
+        <input id="pairLink" class="mono" type="text" readonly aria-label="Generated one-tap pairing URL">
+      </div>
+
+      <div class="modal-actions">
+        <button id="btnCopyPair" type="button">Copy pairing URL</button>
+        <button id="btnSaveToken" class="primary" type="submit">Save &amp; close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
 </body>
 </html>

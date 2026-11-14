@@ -1,4 +1,4 @@
-"""Background analysis of viewed videos: a deduplicating queue, paced worker threads."""
+"""Background analysis of viewed videos: a deduplicating, dwell-prioritised worker queue."""
 import time
 from collections import deque
 from threading import Condition, Lock, Thread
@@ -41,11 +41,15 @@ class Pacer:
 
 
 class Failure(Frozen):
+    """A video whose background analysis raised an error."""
+
     video_id: str
     error: str
 
 
 class QueueStatus(Frozen):
+    """Snapshot of the background analysis queue."""
+
     depth: int
     in_flight: int
     done: int
@@ -56,16 +60,17 @@ class QueueStatus(Frozen):
 class AnalysisQueue:
     """Analyses each video at most once per process, on `start`-ed daemon worker threads.
 
-    A video already stored, queued, in flight or failed is never enqueued again: failures
-    are kept with their error and are not retried (re-run them through /api/analyze).
-    State lives in memory and is lost on restart; stored analyses are not.
+    Watched or live Shorts (`priority=True`) run ahead of rapid skips (`priority=False`);
+    if a skipped Short is later watched while still waiting, it is promoted in place.
+    A video already stored, queued, in flight or failed is never enqueued twice.
     """
 
     def __init__(self, service: AnalysisService, store: AnalysisStore, pacer: Pacer) -> None:
         self.__service = service
         self.__store = store
         self.__pacer = pacer
-        self.__waiting: deque[VideoId] = deque()
+        self.__watched: deque[VideoId] = deque()
+        self.__skips: deque[VideoId] = deque()
         self.__in_flight: set[VideoId] = set()
         self.__failures: dict[VideoId, Failure] = {}
         self.__done = 0
@@ -76,17 +81,16 @@ class AnalysisQueue:
         for index in range(workers):
             Thread(target=self.__work, name=f"analysis-{index}", daemon=True).start()
 
-    def enqueue_if_new(self, video: VideoId) -> bool:
+    def enqueue_if_new(self, video: VideoId, priority: bool = True) -> bool:
         """Atomically queue `video` unless it is stored, queued, in flight or failed.
-        Returns whether it was queued. Reads the store, so it may touch the disk."""
+
+        Promotes an already-waiting skip when `priority` is True, still returning False
+        because no second queue entry was added. Reads the store, so it may touch disk.
+        """
         if self.__store.load(video) is not None:
             return False
         with self.__ready:
-            if self.__known(video):
-                return False
-            self.__waiting.append(video)
-            self.__ready.notify()
-        return True
+            return self.__admit(video, priority)
 
     def state_of(self, video: VideoId) -> QueueState:
         """`queued` while waiting or in flight, `failed` after an error, else `pending`."""
@@ -96,18 +100,33 @@ class AnalysisQueue:
             return "queued" if self.__known(video) else "pending"
 
     def failure(self, video: VideoId) -> Failure | None:
+        """Recorded failure for `video`, or None."""
         with self.__ready:
             return self.__failures.get(video)
 
     def status(self) -> QueueStatus:
+        """Current queue depth, active workers, completed count, and recent failures."""
         with self.__ready:
             failures = tuple(self.__failures.values())
-            return QueueStatus(depth=len(self.__waiting), in_flight=len(self.__in_flight),
+            waiting = len(self.__watched) + len(self.__skips)
+            return QueueStatus(depth=waiting, in_flight=len(self.__in_flight),
                                done=self.__done, failed=len(failures),
                                recent_failures=failures[-RECENT_FAILURES:])
 
+    def __admit(self, video: VideoId, priority: bool) -> bool:
+        if video in self.__skips and priority:
+            self.__skips.remove(video)
+            self.__watched.append(video)
+            return False
+        if self.__known(video):
+            return False
+        (self.__watched if priority else self.__skips).append(video)
+        self.__ready.notify()
+        return True
+
     def __known(self, video: VideoId) -> bool:
-        return video in self.__waiting or video in self.__in_flight or video in self.__failures
+        waiting = video in self.__watched or video in self.__skips
+        return waiting or video in self.__in_flight or video in self.__failures
 
     def __work(self) -> None:
         while True:
@@ -117,10 +136,14 @@ class AnalysisQueue:
 
     def __take(self) -> VideoId:
         with self.__ready:
-            self.__ready.wait_for(lambda: bool(self.__waiting))
-            video = self.__waiting.popleft()
+            self.__ready.wait_for(self.__has_waiting)
+            lane = self.__watched if self.__watched else self.__skips
+            video = lane.popleft()
             self.__in_flight.add(video)
             return video
+
+    def __has_waiting(self) -> bool:
+        return bool(self.__watched or self.__skips)
 
     def __attempt(self, video: VideoId) -> str | None:
         try:

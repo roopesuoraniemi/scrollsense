@@ -11,8 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import Api
 from .auth import BearerToken
-from .composition import ROOT, Settings, wire
-from .intake import ViewIntake
+from .composition import ROOT, Settings, Wiring, wire
+from .intake import LiveWatchers, ViewIntake
 from .jobs import JobBoard
 from .views_api import ViewerReports, ViewsApi
 
@@ -22,15 +22,19 @@ def create_app(settings: Settings) -> FastAPI:
     at /. Starts the analysis queue's worker threads."""
     wiring = wire(settings)
     wiring.queue.start(settings.queue.workers)
-    views = ViewsApi(ViewIntake(wiring.views, wiring.queue),
-                     ViewerReports(wiring.views, wiring.store, wiring.queue), time.time)
     guard = __guard(settings.token)
     app = FastAPI(title="ScrollSense POC")
     app.include_router(Api(wiring.service, wiring.store, JobBoard(wiring.service)).router(),
                        dependencies=guard)
-    app.include_router(views.router(), dependencies=guard)
+    app.include_router(__views_api(wiring).router(), dependencies=guard)
     app.mount("/", StaticFiles(directory=ROOT / "web", html=True), name="web")
     return app
+
+
+def __views_api(wiring: Wiring) -> ViewsApi:
+    live = LiveWatchers()
+    reports = ViewerReports(wiring.views, wiring.store, wiring.queue).tracking(live)
+    return ViewsApi(ViewIntake(wiring.views, wiring.queue, live), reports, time.time)
 
 
 def __guard(token: str | None) -> list[Dependency]:

@@ -1,15 +1,18 @@
 """HTTP adapter for the phone prototype: view batches in, feeds and readouts out."""
+from dataclasses import dataclass
 from operator import attrgetter
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Callable, Literal, Mapping, Sequence
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import Field
 
 from .analysis_queue import AnalysisQueue, QueueStatus
 from .api import ClipSummary
-from .domain import ClipAnalysis, VideoId
-from .feed import Composition, Readout, Shift, composition, readout
-from .intake import Receipt, ViewIntake
+from .domain import ClipAnalysis, Point, VideoId, semantic_points
+from .feed import (Composition, EvidenceItem, Readout, Shift, TrajectoryPoint, composition,
+                   evidence_items, readout, trajectory)
+from .intake import LiveWatchers, Receipt, ViewIntake
+from .loop import LoopGuidance, guidance
 from .ports import AnalysisStore, ViewLog
 from .schemas import Frozen
 from .views import EVER, ViewBatch, ViewerId, ViewEvent, Window
@@ -19,9 +22,12 @@ DAY_S = 86_400.0
 
 
 class ViewerSummary(Frozen):
+    """One known viewer, their logged event count, and any Short currently open."""
+
     viewer: str
     events: int
     last_seen: float | None
+    watching: str | None = None
 
 
 class FeedItem(Frozen):
@@ -31,9 +37,12 @@ class FeedItem(Frozen):
     state: ClipState
     error: str | None
     clip: ClipSummary | None
+    live: bool = False
 
 
 class Spans(Frozen):
+    """Comparison windows in epoch seconds."""
+
     current: Window
     baseline: Window
 
@@ -57,64 +66,116 @@ class ReadoutQuery(Frozen):
 
 
 class ReadoutView(Frozen):
+    """Complete longitudinal readout, supporting evidence, trajectory, and closed-loop view."""
+
     windows: Spans
     current: Composition
     baseline: Composition
     control: Shift | None
     readout: Readout
+    evidence: tuple[EvidenceItem, ...]
+    trajectory: tuple[TrajectoryPoint, ...]
+    guidance: LoopGuidance
+
+
+@dataclass(frozen=True)
+class FeedContext:
+    """Preloaded analyses and viewer-scoped PCA coordinates for rendering feed items."""
+
+    analyses: Mapping[str, ClipAnalysis]
+    points: Mapping[str, Point]
 
 
 class ViewerReports:
-    """Read side: joins the view log with stored analyses and the queue's state."""
+    """Read side: joins the view log with stored analyses, live arrivals, and queue state."""
 
     def __init__(self, log: ViewLog, store: AnalysisStore, queue: AnalysisQueue) -> None:
         self.__log = log
         self.__store = store
         self.__queue = queue
+        self.__live = LiveWatchers()
 
-    def viewers(self) -> tuple[ViewerSummary, ...]:
-        return tuple(self.__summary(v) for v in self.__log.viewers())
+    def tracking(self, live: LiveWatchers) -> "ViewerReports":
+        """Return a view sharing `live` with `ViewIntake` so open Shorts appear before swipe-out."""
+        bound = ViewerReports(self.__log, self.__store, self.__queue)
+        bound.__live = live
+        return bound
 
-    def feed(self, viewer: ViewerId, limit: int) -> tuple[FeedItem, ...]:
-        """Up to `limit` most recent events, newest first."""
-        events = sorted(self.__log.between(viewer, EVER), key=attrgetter("seen_at"), reverse=True)
-        return tuple(self.__item(e) for e in events[:limit])
+    def viewers(self, now: float | None = None) -> tuple[ViewerSummary, ...]:
+        """Every viewer with logged events or an active Short, sorted by pseudonym."""
+        known = {*self.__log.viewers(), *self.__live.viewers(now)}
+        ordered = sorted(known, key=str)
+        return tuple(self.__summary(v, now) for v in ordered)
+
+    def feed(self, viewer: ViewerId, limit: int,
+             now: float | None = None) -> tuple[FeedItem, ...]:
+        """Up to `limit` most recent events (including any active Short), newest first."""
+        logged = sorted(self.__log.between(viewer, EVER), key=attrgetter("seen_at"), reverse=True)
+        active = self.__live_event(viewer, logged, now)
+        ctx = self.__feed_context({e.video_id for e in logged} | ({active.video_id} if active else set()))
+        head = (self.__item(active, ctx, live=True),) if active else ()
+        tail = tuple(self.__item(e, ctx, live=False) for e in logged)
+        return (*head, *tail)[:limit]
 
     def readout(self, viewer: ViewerId, spans: Spans, control: ViewerId | None) -> ReadoutView:
         """`viewer` over `spans`, compared with `control` over the same spans if given."""
-        shift = self.__shift(viewer, spans)
-        control_shift = self.__shift(control, spans) if control is not None else None
+        events = self.__log.between(viewer, EVER)
+        analyses = self.__analyses({e.video_id for e in events})
+        shift = self.__shift_from(events, analyses, spans)
+        ctrl = self.__viewer_shift(control, spans) if control is not None else None
+        result = readout(shift.current, shift.baseline, ctrl)
         return ReadoutView(windows=spans, current=shift.current, baseline=shift.baseline,
-                           control=control_shift,
-                           readout=readout(shift.current, shift.baseline, control_shift))
+                           control=ctrl, readout=result,
+                           evidence=evidence_items(events, analyses, spans.current),
+                           trajectory=trajectory(events, analyses),
+                           guidance=guidance(shift.current, result))
 
     def queue_status(self) -> QueueStatus:
+        """Current background worker queue metrics."""
         return self.__queue.status()
 
-    def __summary(self, viewer: ViewerId) -> ViewerSummary:
+    def __summary(self, viewer: ViewerId, now: float | None) -> ViewerSummary:
         events = self.__log.between(viewer, EVER)
+        watch = self.__live.current(viewer, now)
+        times = [*(e.seen_at for e in events), *([watch.started_at] if watch else [])]
         return ViewerSummary(viewer=viewer.value, events=len(events),
-                             last_seen=max((e.seen_at for e in events), default=None))
+                             last_seen=max(times, default=None),
+                             watching=watch.video_id if watch else None)
 
-    def __item(self, event: ViewEvent) -> FeedItem:
-        analysis = self.__store.load(event.video)
+    def __live_event(self, viewer: ViewerId, logged: Sequence[ViewEvent],
+                     now: float | None) -> ViewEvent | None:
+        watch = self.__live.current(viewer, now)
+        if watch is None:
+            return None
+        candidate = watch.as_event(viewer, now if now is not None else watch.started_at)
+        return None if any(candidate.repeats(e) for e in logged) else candidate
+
+    def __feed_context(self, video_ids: set[str]) -> FeedContext:
+        analyses = self.__analyses(video_ids)
+        return FeedContext(analyses=analyses, points=semantic_points(tuple(analyses.values())))
+
+    def __item(self, event: ViewEvent, ctx: FeedContext, live: bool = False) -> FeedItem:
+        analysis = ctx.analyses.get(event.video_id)
         if analysis is not None:
-            return FeedItem(event=event, state="scored", error=None,
-                            clip=ClipSummary.of(analysis, None))
+            summary = ClipSummary.of(analysis, ctx.points.get(analysis.video_id))
+            return FeedItem(event=event, state="scored", error=None, clip=summary, live=live)
         failure = self.__queue.failure(event.video)
         return FeedItem(event=event, state=self.__queue.state_of(event.video),
-                        error=failure.error if failure else None, clip=None)
+                        error=failure.error if failure else None, clip=None, live=live)
 
-    def __shift(self, viewer: ViewerId, spans: Spans) -> Shift:
-        return Shift(current=self.__composition(viewer, spans.current),
-                     baseline=self.__composition(viewer, spans.baseline))
+    def __viewer_shift(self, viewer: ViewerId, spans: Spans) -> Shift:
+        events = self.__log.between(viewer, EVER)
+        analyses = self.__analyses({e.video_id for e in events})
+        return self.__shift_from(events, analyses, spans)
 
-    def __composition(self, viewer: ViewerId, window: Window) -> Composition:
-        events = self.__log.between(viewer, window)
-        return composition(events, self.__analyses({e.video_id for e in events}), window)
+    @staticmethod
+    def __shift_from(events: Sequence[ViewEvent], analyses: Mapping[str, ClipAnalysis],
+                     spans: Spans) -> Shift:
+        return Shift(current=composition(events, analyses, spans.current),
+                     baseline=composition(events, analyses, spans.baseline))
 
     def __analyses(self, video_ids: set[str]) -> dict[str, ClipAnalysis]:
-        loaded = (self.__store.load(VideoId(v)) for v in video_ids)
+        loaded = (self.__store.load(VideoId(v)) for v in sorted(video_ids))
         return {a.video_id: a for a in loaded if a is not None}
 
 
@@ -128,6 +189,7 @@ class ViewsApi:
         self.__clock = clock
 
     def router(self) -> APIRouter:
+        """Build the FastAPI router bound to this instance."""
         router = APIRouter(prefix="/api")
         router.add_api_route("/views", self.post_views, methods=["POST"], status_code=202)
         router.add_api_route("/viewers", self.viewers, methods=["GET"])
@@ -139,19 +201,23 @@ class ViewsApi:
         return router
 
     def post_views(self, batch: ViewBatch) -> Receipt:
+        """Accept a batch of view events (and optional active Short) from a viewer."""
         try:
             return self.__intake.record(batch)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
     def viewers(self) -> tuple[ViewerSummary, ...]:
-        return self.__reports.viewers()
+        """List known viewers with event counts and active watch status."""
+        return self.__reports.viewers(self.__clock())
 
     def feed(self, viewer: str,
              limit: Annotated[int, Query(ge=1, le=500)] = 50) -> tuple[FeedItem, ...]:
-        return self.__reports.feed(self.__viewer(viewer), limit)
+        """Newest feed items for `viewer`."""
+        return self.__reports.feed(self.__viewer(viewer), limit, self.__clock())
 
     def readout(self, viewer: str, query: Annotated[ReadoutQuery, Query()]) -> ReadoutView:
+        """Longitudinal composition readout, evidence, trajectory and closed-loop view."""
         control = self.__viewer(query.control) if query.control else None
         try:
             spans = query.spans(self.__clock())
@@ -165,6 +231,7 @@ class ViewsApi:
         return Response(status_code=204)
 
     def queue(self) -> QueueStatus:
+        """Status of the background video-analysis queue."""
         return self.__reports.queue_status()
 
     @staticmethod
