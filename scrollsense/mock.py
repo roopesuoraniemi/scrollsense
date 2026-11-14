@@ -1,0 +1,46 @@
+"""ContentAnalyser that makes no API calls, for working on the UI without a key."""
+import hashlib
+import time
+
+from .domain import AnalyserLabel, VideoId
+from .ports import ContentAnalyser
+from .schemas import STANCES, ClipScores, TextPackage
+
+
+class MockAnalyser(ContentAnalyser):
+    """Deterministic placeholder output: text is marked [MOCK], scores are pseudo-random
+    per video. Each call sleeps `delay_s` so the
+    UI's progress stages are visible.
+    """
+
+    def __init__(self, delay_s: float = 0.6) -> None:
+        self.__delay_s = delay_s
+
+    @property
+    def label(self) -> AnalyserLabel:
+        return AnalyserLabel(name="mock", mock=True)
+
+    def describe(self, video: VideoId) -> TextPackage:
+        time.sleep(self.__delay_s)
+        placeholder = "[MOCK] placeholder"
+        return TextPackage(
+            title=f"[MOCK] Placeholder clip {video}",
+            transcript="[MOCK] No video was analysed. Set GEMINI_API_KEY for real output.",
+            on_screen_text=placeholder, visual_description=placeholder,
+            audio_description=placeholder, emotional_cues=placeholder, intended_meaning=placeholder,
+            format="other", people_present=False, language="en",
+            main_message="[MOCK] Placeholder text package used to test the interface.")
+
+    def score(self, package: TextPackage) -> ClipScores:
+        time.sleep(self.__delay_s)
+        seed = package.title
+        return ClipScores(
+            rationale="[MOCK] random scores, not an analysis", evidence="[MOCK] no evidence",
+            negative_affect=self.__digit(seed, "n") % 4, positive_affect=self.__digit(seed, "p") % 4,
+            arousal=1 + self.__digit(seed, "a") % 5,
+            stance=STANCES[self.__digit(seed, "s") % len(STANCES)],  # type: ignore[arg-type]
+            hopeful=bool(self.__digit(seed, "h") % 2))
+
+    @staticmethod
+    def __digit(seed: str, salt: str) -> int:
+        return int(hashlib.sha256((seed + salt).encode()).hexdigest(), 16)

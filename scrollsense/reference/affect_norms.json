@@ -1,0 +1,82 @@
+{
+  "generated_by": "scripts/build_affect_norms.py",
+  "target_scale": "the scoring model's 1-5 valence and arousal (see schemas.ClipScores)",
+  "baseline": {
+    "source": "Warriner, Kuperman & Brysbaert (2013), mapped 1-9 -> 1-5",
+    "cite": "Warriner 2013",
+    "centre": {
+      "valence": 3.032,
+      "arousal": 2.605
+    },
+    "sd": {
+      "valence": 0.637,
+      "arousal": 0.448
+    }
+  },
+  "sources": [
+    {
+      "name": "Warriner, Kuperman & Brysbaert (2013)",
+      "citation": "Warriner, A. B., Kuperman, V., & Brysbaert, M. (2013). Norms of valence, arousal, and dominance for 13,915 English lemmas. Behavior Research Methods, 45, 1191-1207.",
+      "doi": "10.3758/s13428-012-0314-x",
+      "download_url": "https://raw.githubusercontent.com/JULIELab/XANEW/master/Ratings_Warriner_et_al.csv",
+      "licence": "Supplementary material of the article, mirrored by the JULIELab/XANEW repository; check the authors' terms before redistributing. Not redistributed here, only derived summary statistics.",
+      "rating_scale": "1-9 Likert (valence: unhappy..happy; arousal: calm..excited)",
+      "mapping": "x' = 1 + (x - 1) / 2",
+      "split_half_reliability": {
+        "valence": 0.914,
+        "arousal": 0.689,
+        "dominance": 0.77
+      },
+      "n_words": 13915,
+      "valence": {
+        "mean": 5.0638,
+        "sd": 1.2748,
+        "median": 5.2,
+        "mapped_centre": 3.032,
+        "mapped_sd": 0.637
+      },
+      "arousal": {
+        "mean": 4.2106,
+        "sd": 0.8964,
+        "median": 4.11,
+        "mapped_centre": 2.605,
+        "mapped_sd": 0.448
+      }
+    },
+    {
+      "name": "Mohammad (2018), NRC VAD Lexicon v1",
+      "citation": "Mohammad, S. M. (2018). Obtaining reliable human ratings of valence, arousal, and dominance for 20,000 English words. Proceedings of ACL 2018 (P18-1017), 174-184.",
+      "doi": "10.18653/v1/P18-1017",
+      "download_url": "https://www.saifmohammad.com/WebDocs/Lexicons/NRC-VAD-Lexicon.zip",
+      "licence": "Free for non-commercial research and educational use only; commercial use needs a licence from the National Research Council Canada. The lexicon itself is not redistributed here, only derived summary statistics.",
+      "rating_scale": "0-1 best-worst scaling (relative ranking: mean 0.5 by construction)",
+      "mapping": "x' = 1 + 4x",
+      "split_half_reliability": {
+        "valence": 0.95,
+        "arousal": 0.9,
+        "dominance": 0.91
+      },
+      "n_words": 19971,
+      "valence": {
+        "mean": 0.5,
+        "sd": 0.2157,
+        "median": 0.51,
+        "mapped_centre": 3.0,
+        "mapped_sd": 0.863
+      },
+      "arousal": {
+        "mean": 0.5,
+        "sd": 0.1711,
+        "median": 0.48,
+        "mapped_centre": 3.0,
+        "mapped_sd": 0.684
+      }
+    }
+  ],
+  "cross_check": {
+    "n_shared_words": 13855,
+    "r_valence": 0.814,
+    "r_arousal": 0.615
+  },
+  "caveat": "Word norms describe single English words, not video content; the linear mapping onto the model's scales is nominal, not calibrated."
+}

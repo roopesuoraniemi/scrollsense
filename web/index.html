@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScrollSense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F6F7F5;--card:#FFFFFF;--ink:#1D2226;--mut:#5F686E;--faint:#8A9298;--line:#DCE1DF;--acc:#3E5C7A;
+  --warn:#B42318;--warn-bg:#FCEBE9;--warn-line:#F1C4BE;
+  --watch:#8A5A00;--watch-bg:#FBF0D9;--watch-line:#EED8A8;
+  --calm:#1E7A4C;--calm-bg:#E7F3EC;--calm-line:#BEDCCA;
+  --radius:10px;--gap:14px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#141719;--card:#1C2023;--ink:#E7EAEC;--mut:#9AA3A9;--faint:#6E777D;--line:#2E3438;--acc:#9DB7D3;
+  --warn:#F2A79E;--warn-bg:#3A1D1A;--warn-line:#5A2A25;
+  --watch:#EBC37A;--watch-bg:#33270F;--watch-line:#4F3D18;
+  --calm:#8FD3AE;--calm-bg:#13302A;--calm-line:#24503F;
+}}
+:root[data-theme="dark"]{
+  --paper:#141719;--card:#1C2023;--ink:#E7EAEC;--mut:#9AA3A9;--faint:#6E777D;--line:#2E3438;--acc:#9DB7D3;
+  --warn:#F2A79E;--warn-bg:#3A1D1A;--warn-line:#5A2A25;
+  --watch:#EBC37A;--watch-bg:#33270F;--watch-line:#4F3D18;
+  --calm:#8FD3AE;--calm-bg:#13302A;--calm-line:#24503F;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 "Atkinson Hyperlegible",system-ui,sans-serif}
+button,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.wrap{max-width:1280px;margin:0 auto;padding:0 20px 28px}
+
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 0 12px}
+header h1{font-size:19px;font-weight:700;margin:0;letter-spacing:-.01em}
+#mode{font-size:13px;color:var(--faint)}
+#mode.mock{color:var(--watch)}
+.spacer{flex:1}
+#status{font-size:13px;color:var(--mut)}
+#status.err{color:var(--warn)}
+label.viewer{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:8px}
+select{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+#live{display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:13px}
+#live i{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+#live[aria-pressed="true"]{border-color:var(--calm-line);color:var(--calm)}
+#live[aria-pressed="true"] i{background:var(--calm)}
+
+#signals{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:10px;margin-bottom:12px}
+#signals.solo{grid-template-columns:minmax(0,1fr)}
+.panel{border:1px solid var(--line);border-radius:var(--radius);padding:9px 14px;background:var(--card)}
+#drift{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center;min-height:62px}
+#drift .what b{display:block;font-size:15px}
+#drift .what span{font-size:13px}
+.spark{position:relative}
+.spark svg{display:block;width:100%;height:46px}
+.spark span{position:absolute;right:0;transform:translateY(-120%);font-size:11px;opacity:.8}
+#drift.quiet .what span{color:var(--mut)}
+#drift.watch{background:var(--watch-bg);border-color:var(--watch-line);color:var(--watch)}
+#drift.warning{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn)}
+#nudges{background:var(--calm-bg);border-color:var(--calm-line);color:var(--calm);font-size:13px;line-height:1.6}
+#nudges:empty{display:none}
+#nudges b{font-weight:700}
+
+#strip{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+#strip .nav{width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:var(--card);cursor:pointer;display:grid;place-items:center;padding:0}
+#strip .nav:disabled{opacity:.35;cursor:default}
+#thumbs{display:flex;gap:8px;overflow:hidden;flex:0 1 640px;min-width:0}
+.thumb{width:84px;flex:none;border:0;background:none;padding:0;cursor:pointer;text-align:left}
+.thumb .img{display:block;width:84px;aspect-ratio:16/9;border-radius:6px;border:1px solid var(--line);background:var(--line) center/cover no-repeat}
+.thumb .t{display:block;font-size:11px;color:var(--mut);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thumb.on .img{border:2px solid var(--acc)}
+.thumb.on .t{color:var(--ink);font-weight:700}
+.thumb.queued .img,.thumb.pending .img{opacity:.5;border-style:dashed}
+.thumb.failed .t{color:var(--warn)}
+#count{font-size:13px;color:var(--mut);margin-left:4px;white-space:nowrap}
+
+main{display:grid;grid-template-columns:minmax(200px,.55fr) minmax(0,.85fr) minmax(0,1fr);gap:var(--gap);align-items:start}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.video{position:relative;width:100%;aspect-ratio:9/16;border-radius:8px;overflow:hidden;background:#0d0f10}
+.video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.video-link{display:block;font-size:12px;color:var(--mut);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{color:var(--mut);font-size:14px;padding:28px 0;text-align:center}
+
+#pkg h2{font-size:17px;font-weight:700;margin:0;line-height:1.3}
+#pkg .format{font-size:13px;color:var(--mut)}
+#pkg blockquote{margin:12px 0;padding:2px 0 2px 12px;border-left:3px solid var(--acc);font-style:italic}
+#pkg dl{margin:0}
+#pkg dt{font-size:12px;color:var(--mut);margin-top:10px}
+#pkg dd{margin:1px 0 0;max-width:62ch}
+details{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+summary{cursor:pointer;color:var(--mut);font-size:13px}
+details dd{white-space:pre-wrap;max-height:160px;overflow:auto}
+.mocknote{font-size:12px;color:var(--watch);margin:0 0 8px}
+
+#map{display:block;width:100%;height:auto}
+#map text{font:11px "Atkinson Hyperlegible",system-ui,sans-serif;fill:var(--mut)}
+.legend{font-size:12px;color:var(--mut);margin:6px 0 0}
+
+@media (max-width:1000px){
+  main{grid-template-columns:minmax(180px,.6fr) minmax(0,1fr)}
+  main .map{grid-column:1/-1;max-width:560px}
+}
+@media (max-width:680px){
+  .wrap{padding:0 16px 24px}
+  #signals,main{grid-template-columns:minmax(0,1fr)}
+  main .video-card{max-width:240px}
+  #drift{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ScrollSense</h1>
+    <span id="mode"></span>
+    <span class="spacer"></span>
+    <span id="status" role="status"></span>
+    <label class="viewer">Viewer <select id="viewer"></select></label>
+    <button id="live" type="button" aria-pressed="true"><i aria-hidden="true"></i>Live</button>
+  </header>
+
+  <section id="signals" class="solo" aria-label="Feed signals">
+    <div id="drift" class="panel quiet" role="status" aria-live="polite"></div>
+    <div id="nudges" class="panel" aria-label="Nudges sent to the phone"></div>
+  </section>
+
+  <nav id="strip" aria-label="Scrolled Shorts">
+    <button class="nav" id="prev" type="button" aria-label="Older Short">&#8249;</button>
+    <div id="thumbs"></div>
+    <button class="nav" id="next" type="button" aria-label="Newer Short">&#8250;</button>
+    <span id="count"></span>
+  </nav>
+
+  <main>
+    <section class="card video-card" aria-label="Video"><div id="video"><div class="empty">Scroll Shorts on the phone to see them here.</div></div></section>
+    <section class="card" aria-label="Text package"><div id="pkg"><div class="empty">No Short selected.</div></div></section>
+    <section class="card map" aria-label="Affect map">
+      <svg id="map" viewBox="0 0 360 330" role="img" aria-label="Valence and arousal of the recent Shorts against the normal range"></svg>
+      <p class="legend">Dashed ellipse: 1 SD normal range. Red zone: low mood (lower valence and arousal). Dots: the Shorts in the drift window.</p>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
