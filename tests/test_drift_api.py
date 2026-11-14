@@ -9,6 +9,7 @@ from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.auth import BearerToken
 from scrollsense.drift.core import DriftConfig, DriftDetector
 from scrollsense.drift_api import DriftApi, FeedObserver, ViewerDrift
+from scrollsense.scheduling import CachedScheduler
 from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
@@ -30,7 +31,7 @@ def routers(tmp_path: Path) -> list[APIRouter]:
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
     drift = ViewerDrift(FeedObserver(log, store), DriftDetector(CONFIG, NORM))
-    return [ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())),
+    return [ViewsApi(ViewIntake(log, CachedScheduler(queue), ViewerExtras(NoNudges())),
                      ViewerReports(log, store, queue)).router(),
             DriftApi(drift).router()]
 

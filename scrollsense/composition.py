@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from .analysis_queue import AnalysisQueue, Pacer
 from .drift.core import DriftConfig
-from .gemini import GeminiAnalyser, GeminiConfig
+from .gemini import GeminiConfig, gemini_analyser
 from .mock import MockAnalyser
 from .nudge import NudgeSettings
 from .nudgelog import JsonlNudgeLog
@@ -63,6 +63,7 @@ class Settings:
     queue: QueueConfig
     drift: DriftConfig
     nudge: NudgeSettings
+    live: bool
 
     @classmethod
     def from_env(cls, root: Path) -> "Settings":
@@ -70,13 +71,14 @@ class Settings:
         folder (default `root/data`). Raises ValueError on a malformed drift or nudge setting."""
         load_dotenv(root / ".env")
         mock = os.getenv("SCROLLSENSE_MOCK") == "1"
-        gemini = GeminiConfig(model=os.getenv("GEMINI_MODEL", "gemini-4-hydrogen"))
+        gemini = GeminiConfig.from_env(os.environ)
         data = Path(os.getenv("SCROLLSENSE_DATA") or root / "data")
         dirs = DataDirs.under(data, mock)
         return cls(mock=mock, gemini=gemini, data_dir=dirs.clips, views_dir=dirs.views,
                    token=os.getenv("SCROLLSENSE_TOKEN") or None, queue=QueueConfig.from_env(),
                    drift=DriftConfig.from_env(os.environ),
-                   nudge=NudgeSettings.from_env(os.environ))
+                   nudge=NudgeSettings.from_env(os.environ),
+                   live=os.getenv("SCROLLSENSE_LIVE_INFERENCE") == "1")
 
 
 @dataclass(frozen=True)
@@ -99,4 +101,5 @@ def wire(settings: Settings) -> Wiring:
 
 
 def __analyser(settings: Settings) -> ContentAnalyser:
-    return MockAnalyser() if settings.mock else GeminiAnalyser(settings.gemini)
+    return MockAnalyser() if settings.mock else gemini_analyser(settings.gemini)
+

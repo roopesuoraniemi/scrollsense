@@ -1,4 +1,4 @@
-"""The analysis pipeline: describe, score, store."""
+"""The analysis pipeline: analyse, store."""
 from typing import Callable
 
 from .domain import AnalyserLabel, AnalysisRequest, ClipAnalysis, Stage, VideoId
@@ -6,8 +6,8 @@ from .ports import AnalysisStore, ContentAnalyser, Progress
 
 
 class AnalysisService:
-    """Runs the pipeline for one video at a time and stores the result. Describe and score
-    failures propagate."""
+    """Runs the analyser for one video at a time and stores the result. Analyser failures
+    propagate."""
 
     def __init__(self, analyser: ContentAnalyser, store: AnalysisStore,
                  clock: Callable[[], float]) -> None:
@@ -30,9 +30,7 @@ class AnalysisService:
         self.__store.save(self.__analyse(request.video, progress))
 
     def __analyse(self, video: VideoId, progress: Progress) -> ClipAnalysis:
-        progress(Stage.DESCRIBING)
-        package = self.__analyser.describe(video)
-        progress(Stage.SCORING)
-        scores = self.__analyser.score(package)
+        analysed = self.__analyser.analyse(video, progress)
         return ClipAnalysis(video_id=video.value, analyser=self.__analyser.label,
-                            created=self.__clock(), package=package, scores=scores)
+                            created=self.__clock(), package=analysed.package,
+                            scores=analysed.scores)

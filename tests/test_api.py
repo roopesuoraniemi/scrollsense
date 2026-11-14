@@ -26,7 +26,7 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_meta_names_the_analyser(client: TestClient) -> None:
-    assert client.get("/api/meta").json() == {"analyser": {"name": "mock", "mock": True}}
+    assert client.get("/api/meta").json() == {"analyser": {"name": "mock", "mock": True}, "live": False}
 
 
 def test_clip_detail_and_summary_agree(client: TestClient) -> None:

@@ -54,12 +54,14 @@ class ViewerReports:
                              last_seen=max((e.seen_at for e in events), default=None))
 
     def __item(self, event: ViewEvent) -> FeedItem:
-        analysis = self.__store.load(event.video)
+        """A video being (re-)analysed or failed shows that state, never an older stored result."""
+        state = self.__queue.state_of(event.video)
+        analysis = self.__store.load(event.video) if state == "pending" else None
         if analysis is not None:
             return FeedItem(event=event, state="scored", error=None,
                             clip=ClipSummary.of(analysis))
         failure = self.__queue.failure(event.video)
-        return FeedItem(event=event, state=self.__queue.state_of(event.video),
+        return FeedItem(event=event, state=state,
                         error=failure.error if failure else None, clip=None)
 
 class ViewsApi:

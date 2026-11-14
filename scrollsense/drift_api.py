@@ -1,6 +1,7 @@
 """HTTP adapter for drift: each viewer's report against the global norms."""
 from fastapi import APIRouter, HTTPException
 
+from .analysis_queue import AnalysisQueue
 from .domain import ClipAnalysis, VideoId
 from .drift.core import DriftDetector, DriftReport
 from .drift.observe import Observed, observe
@@ -9,19 +10,26 @@ from .views import EVER, ViewerId
 
 
 class FeedObserver:
-    """Reads one viewer's view log joined with the stored analyses of their Shorts."""
+    """Reads one viewer's view log joined with the stored analyses of their Shorts. With a
+    `queue`, a Short being (re-)analysed or failed counts as not analysed yet."""
 
-    def __init__(self, log: ViewLog, store: AnalysisStore) -> None:
+    def __init__(self, log: ViewLog, store: AnalysisStore,
+                 queue: AnalysisQueue | None = None) -> None:
         self.__log = log
         self.__store = store
+        self.__queue = queue
 
     def observed(self, viewer: ViewerId) -> Observed:
         events = self.__log.between(viewer, EVER)
         return observe(events, self.__analyses({e.video_id for e in events}))
 
     def __analyses(self, video_ids: set[str]) -> dict[str, ClipAnalysis]:
-        loaded = (self.__store.load(VideoId(v)) for v in video_ids)
+        settled = (VideoId(v) for v in video_ids if self.__settled(VideoId(v)))
+        loaded = (self.__store.load(v) for v in settled)
         return {a.video_id: a for a in loaded if a is not None}
+
+    def __settled(self, video: VideoId) -> bool:
+        return self.__queue is None or self.__queue.state_of(video) == "pending"
 
 
 class ViewerDrift:

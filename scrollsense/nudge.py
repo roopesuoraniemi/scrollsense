@@ -48,17 +48,17 @@ class NudgeSettings(Frozen):
     """When nudges fire and what the cards offer. Demo defaults; product values are longer.
 
     A support nudge needs the last `streak` judged timeline points at `warning` and at least
-    `cooldown_s` since the last support nudge (times `ok_factor` if that one was answered
-    "I'm OK"). Quiet hours, local time at `tz_offset_min` east of UTC, run from `quiet_from`
-    to `quiet_to` (hours, may wrap midnight); off unless both are set. Unanswered nudges
-    expire after `expire_s`.
+    `cooldown_s` since the last support nudge was answered (times `ok_factor` if answered
+    "I am okay"), or since it was issued if left unanswered. Quiet hours, local time at
+    `tz_offset_min` east of UTC, run from `quiet_from` to `quiet_to` (hours, may wrap
+    midnight); off unless both are set. Unanswered nudges expire after `expire_s`.
     Raises ValueError if only one quiet bound is set.
     """
 
     enabled: bool = True
-    streak: int = Field(default=2, ge=1)
-    cooldown_s: float = Field(default=600.0, ge=0)
-    ok_factor: float = Field(default=2.0, ge=1)
+    streak: int = Field(default=1, ge=1)
+    cooldown_s: float = Field(default=900.0, ge=0)
+    ok_factor: float = Field(default=1.0, ge=1)
     expire_s: float = Field(default=900.0, gt=0)
     quiet_from: int | None = Field(default=None, ge=0, lt=DAY_H)
     quiet_to: int | None = Field(default=None, ge=0, lt=DAY_H)
@@ -91,7 +91,7 @@ class NudgeSettings(Frozen):
 
     def __support_options(self) -> tuple["NudgeOption", ...]:
         return (
-            NudgeOption(choice=OK_CHOICE, label="I'm OK", action="close"),
+            NudgeOption(choice=OK_CHOICE, label="I am okay", action="close"),
             NudgeOption(choice="take_break", label="I want to take a break", action="leave"),
             NudgeOption(choice="not_now", label="Not now", action="close"))
 
@@ -231,6 +231,13 @@ class NudgePolicy:
             return self.__support(report, now)
         return None
 
+    def cooldown_until(self, entry: NudgeEntry) -> float:
+        """Epoch seconds when `entry`'s cooldown ends."""
+        since = entry.response.at if entry.response is not None else entry.nudge.created_at
+        declined = entry.response is not None and entry.response.choice == OK_CHOICE
+        factor = self.__settings.ok_factor if declined else 1.0
+        return since + self.__settings.cooldown_s * factor
+
     def __support_due(self, report: DriftReport, history: NudgeHistory, now: float) -> bool:
         settings = self.__settings
         return (warning_streak(report.timeline, settings.streak) and not settings.quiet_at(now)
@@ -238,11 +245,7 @@ class NudgePolicy:
 
     def __cooled(self, history: NudgeHistory, now: float) -> bool:
         last = history.last_support()
-        if last is None:
-            return True
-        declined = last.response is not None and last.response.choice == OK_CHOICE
-        factor = self.__settings.ok_factor if declined else 1.0
-        return now - last.nudge.created_at >= self.__settings.cooldown_s * factor
+        return last is None or now >= self.cooldown_until(last)
 
     def __support(self, report: DriftReport, now: float) -> Nudge:
         reason = (f"Drift warning on the last {self.__settings.streak} judged points "
