@@ -159,9 +159,11 @@ function renderSignals(drift, nudges) {
   state.drift = drift;
   state.nudges = nudges;
   syncCooldown(nudges);
-  const shown = nudges.slice(0, 3);   // the API lists the newest first
-  $('signals').classList.toggle('solo', shown.length === 0);
-  $('nudges').innerHTML = shown.map((n) => nudgeRow(n, drift)).join('');
+  $('nudges').innerHTML = nudges.length
+    ? nudges.map((n) => nudgeRow(n, drift)).join('')
+    : `<div class="none">None yet. A check-in is sent when the drift passes the ${drift?.config.warn ?? 1} SD alarm.</div>`;
+  $('tab-badge').hidden = !nudges.length;
+  $('tab-badge').textContent = `${nudges.length} check-in${nudges.length === 1 ? '' : 's'}`;
   $('drift').className = `panel ${LEVEL_CLASS[drift?.level] ?? 'quiet'}`;
   $('drift').innerHTML = drift ? driftSummary(drift, nudges[0]) + sparkline(drift, nudges) : '<div class="what"><span>No drift report yet</span></div>';
   if (nudges.length !== prevNudges) renderMap();
@@ -221,8 +223,8 @@ function nudgeRow({ nudge, response, state: status }, drift) {
   const chosen = nudge.card.options.find((o) => o.choice === response?.choice);
   const outcome = response ? `chose "${esc(chosen?.label ?? response.choice)}"` : status === 'open' ? 'no answer yet' : 'expired, no answer';
   const sd = nudge.reason.match(/([\d.]+) SD/)?.[1];
-  const cause = sd ? `Drift ${sd} SD passed ${drift?.config.warn ?? 1} SD` : 'Check-in';
-  return `<div><b>${hhmm(nudge.created_at)}</b> ${cause} → ${outcome}</div>`;
+  const cause = sd ? `Drift ${sd} SD passed the ${drift?.config.warn ?? 1} SD alarm` : 'Drift passed the alarm';
+  return `<div class="row"><b>${hhmm(nudge.created_at)}</b> ${cause} → check-in sent → ${outcome}</div>`;
 }
 
 // ---------------------------------------------------------------- carousel of scrolled Shorts
@@ -276,8 +278,9 @@ function renderPackage() {
 
 function renderPending(id) {
   const item = state.feed.find((entry) => entry.event.video_id === id);
-  const text = item?.state === 'failed' ? `Analysis failed: ${item.error}` : 'Gemini is watching this Short...';
-  $('pkg').innerHTML = `<div class="empty">${esc(text)}</div>`;
+  $('pkg').innerHTML = item?.state === 'failed'
+    ? `<div class="empty">${esc(`Analysis failed: ${item.error}`)}</div>`
+    : '<div class="empty analyzing" role="status">Analyzing</div>';
 }
 
 // ---------------------------------------------------------------- affect map
@@ -430,12 +433,31 @@ function placeArrow(tip) {
   $('arrow-head').setAttribute('points', Math.hypot(tip.x - cx, tip.y - cy) > 5 ? `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ${wing(0.45)} ${wing(-0.45)}` : '');
 }
 
+function selectTab(tab) {
+  document.querySelectorAll('[role="tab"]').forEach((t) => {
+    const on = t === tab;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    $(t.getAttribute('aria-controls')).hidden = !on;
+  });
+  tab.focus();
+}
+
+function onTabKey(event) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const next = tabs[(tabs.indexOf(event.target) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  selectTab(next);
+}
+
 // ---------------------------------------------------------------- wiring
 
 $('viewer').onchange = (event) => changeViewer(event.target.value);
 $('live').onclick = () => setFollow(!state.follow);
 $('prev').onclick = () => step(-1);
 $('next').onclick = () => step(1);
+document.querySelectorAll('[role="tab"]').forEach((tab) => { tab.onclick = () => selectTab(tab); tab.onkeydown = onTabKey; });
+if (location.hash === '#clinician') selectTab($('tab-clinician'));
 window.addEventListener('resize', () => renderStrip());
 document.addEventListener('keydown', (event) => {
   if (event.target.closest('select, input, textarea, summary')) return;
