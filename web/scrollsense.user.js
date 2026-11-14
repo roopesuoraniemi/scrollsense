@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ScrollSense logger
 // @namespace    scrollsense
-// @version      0.10
+// @version      0.11
 // @description  Sends the IDs of the YouTube Shorts you watch to your own ScrollSense server, and shows its occasional check-in cards.
 // @match        https://m.youtube.com/*
 // @match        https://www.youtube.com/*
@@ -107,19 +107,25 @@
     :host { all: initial; }
     .veil { position: fixed; inset: 0; z-index: 2147483646; display: flex; align-items: flex-end;
       justify-content: center; padding: 16px; background: rgba(20, 30, 28, 0.45);
-      font: 17px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      font: 17px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      animation: veil-in .3s ease-out both; }
     .card { --bg: #f6faf8; --ink: #20352f; --soft: #557069; --btn: #e3efea; --btn-ink: #1f3a33;
       --accent: #2f6b5c; --accent-ink: #fff; --edge: #b9d6cb;
       width: 100%; max-width: 440px; max-height: 88vh; overflow-y: auto; box-sizing: border-box;
       background: var(--bg); color: var(--ink); border: 2px solid var(--edge);
-      border-radius: 20px; padding: 22px 18px 18px; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+      border-radius: 20px; padding: 22px 18px 18px; box-shadow: 0 10px 40px rgba(0,0,0,.35);
+      animation: card-up .5s cubic-bezier(.2, .85, .25, 1) .05s both; }
+    /* the card rises from below the bottom edge of the screen while the page dims */
+    @keyframes veil-in { from { background: rgba(20, 30, 28, 0); } }
+    @keyframes card-up { from { transform: translateY(calc(100% + 24px)); } }
+    @media (prefers-reduced-motion: reduce) { .veil, .card { animation: none; } }
     @media (prefers-color-scheme: dark) {
       .card { --bg: #17241f; --ink: #e2efe9; --soft: #9db8ae; --btn: #23362f; --btn-ink: #e2efe9;
         --accent: #7fbfaa; --accent-ink: #10201c; --edge: #3a5c51; }
     }
     h2 { margin: 0 0 6px; font-size: 1.3rem; line-height: 1.3; }
     p { margin: 0 0 16px; color: var(--soft); }
-    .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .options { display: grid; grid-template-columns: 1fr; gap: 8px; }
     button { all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 52px;
       padding: 13px 16px; border-radius: 14px; background: var(--btn); color: var(--btn-ink);
       font: inherit; font-weight: 600; text-align: center; cursor: pointer;
@@ -174,7 +180,7 @@
     box.replaceChildren();
     const title = document.createElement('h2');
     title.textContent = card.title;
-    // All options side by side, equal width and equal weight: no answer is pushed.
+    // All options stacked, full width and equal weight: no answer is pushed.
     const row = Object.assign(document.createElement('div'), { className: 'options' });
     card.options.forEach((option) => row.appendChild(button(option.label, () => choose(card, option))));
     box.append(title);

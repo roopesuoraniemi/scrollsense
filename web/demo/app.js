@@ -406,8 +406,8 @@ function renderSignals(drift, nudges) {
 function syncCooldown(nudges) {
   const latest = nudges[0];
   if (!latest || latest.cooldown_remaining_s <= 0) { state.cooldown = null; return; }
-  if (state.cooldown?.id === latest.nudge.id && state.cooldown.synced) return;
-  state.cooldown = { id: latest.nudge.id, untilMs: Date.now() + latest.cooldown_remaining_s * 1000, synced: true, done: false };
+  if (state.cooldown?.id === latest.nudge.card.id && state.cooldown.synced) return;
+  state.cooldown = { id: latest.nudge.card.id, untilMs: Date.now() + latest.cooldown_remaining_s * 1000, synced: true, done: false };
 }
 
 function cooldownSeconds() {
