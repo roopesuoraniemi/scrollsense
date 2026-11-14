@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.drift.core import DriftDetector, DriftReport, TimelinePoint
 from scrollsense.drift_api import FeedObserver, ViewerDrift
-from scrollsense.scheduling import CachedScheduler, RunBudget, RunLimits
+from scrollsense.scheduling import CachedScheduler
 from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.nudge import (AlreadyAnswered, BadChoice, Nudge, NudgeEntry, NudgeHistory,
                                NudgePolicy, NudgeResponse, NudgeSettings, warning_streak)
@@ -166,7 +166,7 @@ def routers(tmp_path: Path) -> tuple[APIRouter, ...]:
                           Pacer(0.0, time.monotonic, no_wait))
     drift = ViewerDrift(FeedObserver(log, store), DriftDetector(SMALL, NORM))
     desk = NudgeDesk(JsonlNudgeLog(tmp_path / "views"), NudgeJudge(drift, POLICY), lambda: NOW)
-    views = ViewsApi(ViewIntake(log, CachedScheduler(queue, RunBudget(RunLimits())), ViewerExtras(desk)),
+    views = ViewsApi(ViewIntake(log, CachedScheduler(queue), ViewerExtras(desk)),
                      ViewerReports(log, store, queue))
     return views.router(), NudgeApi(desk).router()
 

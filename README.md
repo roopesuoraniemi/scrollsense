@@ -37,32 +37,39 @@ Open `http://localhost:8765/?token=<token>` once; the page remembers the token.
 
 `/` is a web demo of the whole loop on one screen (this branch replaces the clinician page with it):
 
-- **Phone (left):** plays a scripted Shorts feed (`web/demo-feed.json`): upbeat, then a run of
-  low-mood Shorts, then upbeat again. Scroll, swipe or press ↑/↓ to move; tap or Space to pause.
-  Every Short shown is a real view event, so the right side updates as you scroll.
-- **Check-in card:** when a nudge is due it appears on the phone, as the patient sees it. "I want
-  to take a break" blanks the phone; **Reset demo** erases the demo viewer and starts over.
-- **Add a Short:** paste a YouTube Short URL and it plays next.
+- **User sees (left):** the phone plays a scripted Shorts feed (`web/demo-feed.json`): upbeat,
+  then a run of low-mood Shorts, then upbeat again. Scroll, swipe or press ↑/↓ to move; tap or
+  Space to pause. Every Short shown is a real view event.
+- **Check-in card:** when the drift passes the 1 SD alarm, a card slides up on the phone, as the
+  patient sees it, with its three options stacked.
+  "I want to take a break" closes the feed; **Continue scrolling** brings it back.
+- **Want to test your own video?** Paste a YouTube Short URL and it plays next. The phone shrinks
+  with the window height so this box stays on screen.
+- **Only software sees (right, first tab):** a compact trend strip on top (drift per analysed
+  Short, the 1 SD alarm line, a dotted mark where each check-in was sent, and a status line such
+  as "Warning: 2.8 SD, past the 1 SD alarm, check-in sent 19.57"), then the Short's text
+  description and the mood map of the recent Shorts with the low-mood zone.
+- **Clinician sees (second tab, `#clinician` opens it):** this session's check-ins with the drift
+  that caused each and the answer, in red, then an **example history** (clearly labelled, invented
+  data in `web/app.js`): two weeks of check-ins per day, totals and each check-in with its answer.
+  The tab shows the number of check-ins this session.
 - **Live inference** (`SCROLLSENSE_LIVE_INFERENCE=1`): each viewer's first view of a Short starts
-  a fresh Gemini run (about 2 to 6 s), so results arrive after the video, never ahead of it. Until
-  the run is done the page shows a timer, and any older stored result is hidden from the feed,
-  the drift and the nudge. Scores can differ a little between runs, so where the warning starts
-  varies.
-- **Clinician view (right):** warning panel with the drift chart, the check-ins and answers, the
-  text package of the Short on the phone, and the affect map with the low-mood zone.
+  a fresh Gemini run (about 2 to 6 s), so results arrive after the video, never ahead of it.
+  Until it is done the text panel says Analyzing; older stored results stay hidden.
+- **Reset demo** (top right) erases the demo viewer and starts over.
 
 Each browser gets its own viewer (`demo-xxxxxxxx`, kept in localStorage; `?viewer=demo-name` pins
 one). Share `https://<tunnel>/?token=<token>`. With the scripted feed and window 5 the warning
 and the check-in card show around Short 9, a few seconds after that Short starts.
 
-Gemini runs (live runs and pasted Shorts) are capped, because a shared link spends credits. Over
-the cap, views fall back to stored results:
+The only limit on Gemini is the queue's pace: at most `SCROLLSENSE_RPM` analyses start per minute
+(default 20), for all visitors together. When many people scroll at once, Shorts wait their turn
+and the text panel keeps saying Analyzing.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `SCROLLSENSE_LIVE_INFERENCE` | `0` | `1`: a fresh run on each viewer's first view of a Short |
-| `SCROLLSENSE_RUNS_PER_VIEWER` | `40` | Runs per viewer (a reset does not refund them) |
-| `SCROLLSENSE_RUNS_TOTAL` | `400` | Runs per server run |
+| `SCROLLSENSE_RPM` | `20` | Analyses started per minute, at most |
 
 Set `SCROLLSENSE_WORKERS=6` with live inference so the queue keeps up with scrolling.
 
@@ -134,7 +141,7 @@ All routes need `Authorization: Bearer <token>` when `SCROLLSENSE_TOKEN` is set.
 | `POST /api/viewers/{v}/nudges/{id}/response` `{choice}` | 204; 404 unknown, 409 already answered, 422 not an option |
 | `DELETE /api/viewers/{v}` | 204; erases the viewer's views and nudges (GDPR) |
 | `GET /api/queue` | `{depth, in_flight, done, failed, recent_failures}` |
-| `POST /api/demo/shorts` `{viewer, url}` | 201 `{video_id, state}`; checks the run budget (and in cache mode queues the Short); 400 bad input, 429 over budget |
+| `POST /api/demo/shorts` `{viewer, url}` | 201 `{video_id, state}`; in cache mode queues the Short (live mode analyses it when viewed); 400 bad input |
 
 Other settings: `SCROLLSENSE_WORKERS` (2), `SCROLLSENSE_RPM` (20 analyses per minute, 0 = unpaced),
 `SCROLLSENSE_DATA` (`data`).
@@ -184,7 +191,7 @@ A pure core inside a shell of swappable parts (see `rules/`).
 | `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations (one-call and two-stage Gemini, mock) |
 | `scrollsense/store.py`, `viewlog.py` | JSON and JSONL storage |
 | `scrollsense/service.py`, `analysis_queue.py`, `intake.py` | Describe-then-score pipeline, paced queue, view intake |
-| `scrollsense/scheduling.py` | Cached or live analysis scheduling, and the run budget |
+| `scrollsense/scheduling.py` | Cached or live analysis scheduling |
 | `scrollsense/api.py`, `views_api.py`, `drift_api.py`, `demo_api.py`, `auth.py` | HTTP routes and the Bearer guard |
 | `scrollsense/composition.py`, `server.py`, `__main__.py` | Settings and wiring, entry points |
 | `web/index.html`, `app.js`, `demo-feed.json` | The demo page and its scripted feed (no build step) |

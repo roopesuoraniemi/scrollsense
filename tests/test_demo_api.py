@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.demo_api import DemoApi, ShortAdder
 from scrollsense.domain import AnalysisRequest, VideoId
-from scrollsense.scheduling import CachedScheduler, LiveScheduler, RunBudget, RunLimits
+from scrollsense.scheduling import CachedScheduler, LiveScheduler
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
 
@@ -16,12 +16,12 @@ from .fakes import instant_mock, no_wait
 IDS = ("aaaaaaaaaaa", "bbbbbbbbbbb")
 
 
-def client(tmp_path: Path, live: bool, limits: RunLimits = RunLimits()) -> TestClient:
+def client(tmp_path: Path, live: bool) -> TestClient:
     store = JsonFileStore(tmp_path / "clips")
     service = AnalysisService(instant_mock(), store, time.time)
     service.run(AnalysisRequest(VideoId(IDS[0])), lambda stage: None)
     queue = AnalysisQueue(service, store, Pacer(0.0, time.monotonic, no_wait))
-    scheduler = (LiveScheduler if live else CachedScheduler)(queue, RunBudget(limits))
+    scheduler = (LiveScheduler if live else CachedScheduler)(queue)
     app = FastAPI()
     app.include_router(DemoApi(ShortAdder(scheduler, queue, store)).router())
     return TestClient(app)
@@ -43,10 +43,6 @@ def test_cached_mode_reports_a_stored_short(tmp_path: Path) -> None:
 
 def test_live_mode_waits_for_the_view(tmp_path: Path) -> None:
     assert add(client(tmp_path, live=True), IDS[1]) == (201, {"video_id": IDS[1], "state": "pending"})
-
-
-def test_over_quota_is_429(tmp_path: Path) -> None:
-    assert add(client(tmp_path, live=True, limits=RunLimits(per_viewer=0)), IDS[1])[0] == 429
 
 
 def test_bad_input_is_400(tmp_path: Path) -> None:

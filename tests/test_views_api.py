@@ -9,7 +9,7 @@ from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.domain import AnalysisRequest, VideoId
 from scrollsense.drift_api import FeedObserver
 from scrollsense.auth import BearerToken
-from scrollsense.scheduling import CachedScheduler, LiveScheduler, RunBudget, RunLimits
+from scrollsense.scheduling import CachedScheduler, LiveScheduler
 from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
@@ -29,7 +29,7 @@ def app(tmp_path: Path, token: str | None) -> FastAPI:
     queue = AnalysisQueue(AnalysisService(instant_mock(), store, time.time), store,
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
-    api = ViewsApi(ViewIntake(log, CachedScheduler(queue, RunBudget(RunLimits())), ViewerExtras(NoNudges())), ViewerReports(log, store, queue))
+    api = ViewsApi(ViewIntake(log, CachedScheduler(queue), ViewerExtras(NoNudges())), ViewerReports(log, store, queue))
     built = FastAPI()
     built.include_router(api.router(), dependencies=[Depends(BearerToken(token))] if token else [])
     return built
@@ -109,7 +109,7 @@ def test_a_live_rerun_hides_the_stored_result_until_done(tmp_path: Path) -> None
     service = AnalysisService(instant_mock(), store, time.time)
     service.run(AnalysisRequest(VideoId("aaaaaaaaaaa")), lambda stage: None)
     queue = AnalysisQueue(service, store, Pacer(0.0, time.monotonic, no_wait))   # not started
-    intake = ViewIntake(log, LiveScheduler(queue, RunBudget(RunLimits())), ViewerExtras(NoNudges()))
+    intake = ViewIntake(log, LiveScheduler(queue), ViewerExtras(NoNudges()))
     intake.record(ViewBatch.model_validate(batch("demo-ann", "aaaaaaaaaaa")))
     assert ViewerReports(log, store, queue).feed(ViewerId("demo-ann"), 10)[0].state == "queued"
     observed = FeedObserver(log, store, queue).observed(ViewerId("demo-ann"))

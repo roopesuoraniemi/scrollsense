@@ -1,5 +1,5 @@
 """The web demo's "add a Short" route: validate a pasted Short and let the scheduler start its
-analysis within the run budget, so a public demo link cannot spend unbounded Gemini credits."""
+analysis (paced like every other run)."""
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from .analysis_queue import AnalysisQueue
 from .domain import VideoId
 from .ports import AnalysisStore
-from .scheduling import AnalysisScheduler, QuotaExceeded
+from .scheduling import AnalysisScheduler
 from .schemas import Frozen
 from .views import ViewerId
 
@@ -35,7 +35,6 @@ class ShortAdder:
         self.__store = store
 
     def add(self, viewer: ViewerId, video: VideoId) -> Added:
-        """Raises QuotaExceeded if the viewer may not start another run."""
         self.__scheduler.added(viewer, video)
         return Added(video_id=video.value, state=self.__state_of(video))
 
@@ -62,5 +61,3 @@ class DemoApi:
             return self.__adder.add(ViewerId(body.viewer), VideoId.parse(body.url))
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        except QuotaExceeded as error:
-            raise HTTPException(429, str(error)) from error

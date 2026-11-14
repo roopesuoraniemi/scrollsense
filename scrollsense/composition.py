@@ -7,7 +7,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .analysis_queue import AnalysisQueue, Pacer
-from .scheduling import RunLimits
 from .drift.core import DriftConfig
 from .gemini import GeminiConfig, gemini_analyser
 from .mock import MockAnalyser
@@ -65,7 +64,6 @@ class Settings:
     drift: DriftConfig
     nudge: NudgeSettings
     live: bool
-    runs: RunLimits
 
     @classmethod
     def from_env(cls, root: Path) -> "Settings":
@@ -80,8 +78,7 @@ class Settings:
                    token=os.getenv("SCROLLSENSE_TOKEN") or None, queue=QueueConfig.from_env(),
                    drift=DriftConfig.from_env(os.environ),
                    nudge=NudgeSettings.from_env(os.environ),
-                   live=os.getenv("SCROLLSENSE_LIVE_INFERENCE") == "1",
-                   runs=RunLimits.from_env(os.environ))
+                   live=os.getenv("SCROLLSENSE_LIVE_INFERENCE") == "1")
 
 
 @dataclass(frozen=True)

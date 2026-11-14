@@ -16,7 +16,7 @@ from .affect_norms import load_affect_norms
 from .auth import BearerToken
 from .composition import ROOT, Settings, Wiring, wire
 from .demo_api import DemoApi, ShortAdder
-from .scheduling import AnalysisScheduler, CachedScheduler, LiveScheduler, RunBudget
+from .scheduling import AnalysisScheduler, CachedScheduler, LiveScheduler
 from .drift.core import DriftDetector
 from .drift_api import DriftApi, FeedObserver, ViewerDrift
 from .intake import ViewerExtras, ViewIntake
@@ -61,7 +61,7 @@ def __routers(wiring: Wiring, settings: Settings) -> list[APIRouter]:
 
 def __scheduler(wiring: Wiring, settings: Settings) -> AnalysisScheduler:
     kind = LiveScheduler if settings.live else CachedScheduler
-    return kind(wiring.queue, RunBudget(settings.runs))
+    return kind(wiring.queue)
 
 
 def __guard(token: str | None) -> list[Dependency]:

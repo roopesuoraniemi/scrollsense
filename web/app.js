@@ -71,6 +71,7 @@ async function init() {
   state.viewer = demoViewer();
   [state.meta, state.script] = await Promise.all([api('/api/meta'), fetch('demo-feed.json').then((r) => r.json())]);
   renderMode();
+  renderHistory();
   state.playlist = [...state.script];
   show(0);
   setInterval(() => tick().catch((error) => setStatus(error.message, true)), POLL_MS);
@@ -204,8 +205,35 @@ function takeBreak() {
   $('player').innerHTML = '';
   $('screen').style.backgroundImage = 'none';
   $('overlay').innerHTML = `<div class="gone"><b>The feed is closed</b><span>On the phone, YouTube closes here. Enjoy the break.</span>
-    <button type="button" id="gone-reset">Reset demo</button></div>`;
-  $('gone-reset').onclick = reset;
+    <button type="button" id="gone-continue">Continue scrolling</button></div>`;
+  $('gone-continue').onclick = continueScrolling;
+}
+
+// Back from the break: the same Short plays again (no new view is logged).
+function continueScrolling() {
+  state.onBreak = false;
+  $('overlay').innerHTML = '';
+  renderPlayer();
+  renderPhoneChrome();
+}
+
+// ---------------------------------------------------------------- tabs: whose view the right side shows
+
+function selectTab(tab) {
+  document.querySelectorAll('[role="tab"]').forEach((t) => {
+    const on = t === tab;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    $(t.getAttribute('aria-controls')).hidden = !on;
+  });
+  tab.focus();
+}
+
+function onTabKey(event) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const next = tabs[(tabs.indexOf(event.target) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  selectTab(next);
 }
 
 async function reset() {
@@ -293,22 +321,27 @@ const LEVEL_STROKE = { learning: 'var(--faint)', normal: 'var(--mut)', watch: 'v
 
 function renderSignals(drift, nudges) {
   state.drift = drift;
-  const shown = nudges.slice(0, 3);   // the API lists the newest first
-  $('signals').classList.toggle('solo', shown.length === 0);
-  $('nudges').innerHTML = shown.map(nudgeRow).join('');
-  $('drift').className = `panel ${LEVEL_CLASS[drift?.level] ?? 'quiet'}`;
-  $('drift').innerHTML = drift ? driftSummary(drift) + sparkline(drift) : '<div class="what"><span>No drift report yet</span></div>';
+  $('trend').className = `panel ${LEVEL_CLASS[drift?.level] ?? 'quiet'}`;
+  const status = drift ? trendStatus(drift, nudges[0]) : 'No drift report yet';
+  $('trend').innerHTML = `<div class="what"><b>Trend: drift towards low mood</b><span>${status}</span></div>${drift ? sparkline(drift, nudges) : ''}`;
+  $('nudges').innerHTML = nudges.length ? nudges.map((n) => nudgeRow(n, drift)).join('') : `<div class="none">None yet. A check-in is sent when the drift passes the ${drift?.config.warn ?? 1} SD alarm.</div>`;
+  $('tab-badge').hidden = !nudges.length;
+  $('tab-badge').textContent = `${nudges.length} check-in${nudges.length === 1 ? '' : 's'}`;
 }
 
-function driftSummary(d) {
-  const n = d.recent.n;
-  if (d.level === 'learning') return `<div class="what"><b>Collecting Shorts</b><span>${n} of ${Math.ceil(d.config.window / 2)} analysed</span></div>`;
-  return `<div class="what"><b>${LEVEL_TITLE[d.level]}</b><span>${(d.score ?? 0).toFixed(1)} SD, last ${n} Shorts</span></div>`;
+// One line that ties the drift to its consequence: past the alarm line, a check-in goes out.
+function trendStatus(d, latest) {
+  const n = d.recent.n, sd = (d.score ?? 0).toFixed(1), alarm = d.config.warn;
+  if (d.level === 'learning') return `Collecting Shorts: ${n} of ${Math.ceil(d.config.window / 2)} analysed`;
+  if (d.level !== 'warning') return `${sd} SD, last ${n} Shorts (alarm at ${alarm} SD)`;
+  const sent = latest ? `, check-in sent ${hhmm(latest.nudge.created_at)}` : ', check-in on its way';
+  return `Warning: ${sd} SD, past the ${alarm} SD alarm${sent}`;
 }
 
-function sparkline(d) {
+// Drift after each judged Short, the alarm line, and a dotted mark where each check-in was sent.
+function sparkline(d, nudges) {
   const points = d.timeline.slice(-40);
-  if (points.length < 2) return '<svg aria-hidden="true"></svg>';
+  if (points.length < 2) return '<div></div>';
   const W = 400, H = 46, P = 5;
   const top = Math.max(d.config.warn * 2, ...points.map((p) => p.score));
   const x = (i) => P + i / (points.length - 1) * (W - 2 * P);
@@ -316,16 +349,57 @@ function sparkline(d) {
   const line = points.map((p, i) => `${x(i).toFixed(1)},${y(p.score).toFixed(1)}`).join(' ');
   const stroke = LEVEL_STROKE[d.level];
   const last = { x: x(points.length - 1), y: y(points[points.length - 1].score) };
-  return `<div class="spark"><span style="top:${(y(d.config.warn) / H * 100).toFixed(0)}%">${d.config.warn} SD</span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Drift per Short; the dashed line is ${d.config.warn} SD">
-    <line x1="${P}" x2="${W - P}" y1="${y(d.config.warn)}" y2="${y(d.config.warn)}" stroke="${stroke}" stroke-dasharray="5 4" opacity=".55" vector-effect="non-scaling-stroke"/>
+  const marks = nudges.map((n) => points.findLastIndex((p) => p.seen_at <= n.nudge.created_at)).filter((i) => i >= 0)
+    .map((i) => `<line x1="${x(i)}" x2="${x(i)}" y1="${P}" y2="${H - P}" stroke="var(--warn)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"><title>Check-in sent</title></line>`).join('');
+  return `<div class="spark"><span class="lbl" style="top:${(y(d.config.warn) / H * 100).toFixed(0)}%">${d.config.warn} SD alarm</span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Drift per Short; the dashed line is the ${d.config.warn} SD alarm; dotted lines mark check-ins">
+    <line x1="${P}" x2="${W - P}" y1="${y(d.config.warn)}" y2="${y(d.config.warn)}" stroke="${stroke}" stroke-dasharray="5 4" opacity=".55" vector-effect="non-scaling-stroke"/>${marks}
     <polyline points="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
     <line x1="${last.x}" y1="${last.y}" x2="${last.x}" y2="${last.y}" stroke="${stroke}" stroke-width="7" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg></div>`;
 }
 
-function nudgeRow({ nudge, response, state: status }) {
+// ---------------------------------------------------------------- example history (clinician tab)
+
+// Illustrative only: one invented patient's check-ins over the last 14 days, so the clinician
+// view shows what following a patient over time looks like. Never stored or sent anywhere.
+const EXAMPLE_HISTORY = [
+  { daysAgo: 13, at: '22:41', sd: 1.3, answer: 'Not now' },
+  { daysAgo: 11, at: '23:05', sd: 1.6, answer: 'I want to take a break' },
+  { daysAgo: 9, at: '21:52', sd: 1.2, answer: "I'm OK" },
+  { daysAgo: 6, at: '00:14', sd: 2.1, answer: 'I want to take a break' },
+  { daysAgo: 6, at: '00:58', sd: 2.4, answer: null },
+  { daysAgo: 4, at: '23:37', sd: 1.8, answer: 'I want to take a break' },
+  { daysAgo: 2, at: '22:20', sd: 1.4, answer: "I'm OK" },
+  { daysAgo: 1, at: '23:49', sd: 2.6, answer: 'I want to take a break' },
+];
+
+function renderHistory() {
+  const perDay = Array.from({ length: 14 }, (_, i) => EXAMPLE_HISTORY.filter((h) => h.daysAgo === 13 - i).length);
+  const most = Math.max(...perDay);
+  const breaks = EXAMPLE_HISTORY.filter((h) => h.answer === 'I want to take a break').length;
+  const late = EXAMPLE_HISTORY.filter((h) => h.at >= '22:00' || h.at < '05:00').length;
+  $('history').innerHTML = `<div class="hist-sum"><span><b>${EXAMPLE_HISTORY.length}</b>check-ins in 14 days</span><span><b>${breaks}</b>chose a break</span>
+      <span><b>${late} of ${EXAMPLE_HISTORY.length}</b>after 22.00</span><span><b>${Math.max(...EXAMPLE_HISTORY.map((h) => h.sd)).toFixed(1)} SD</b>highest drift</span></div>
+    <div class="days" role="img" aria-label="Check-ins per day over the last 14 days">${perDay.map((n) => `<i class="${n ? '' : 'zero'}" style="height:${n ? (n / most) * 100 : 3}%" title="${n} check-in${n === 1 ? '' : 's'}"></i>`).join('')}</div>
+    <div class="day-labels"><span>${dayLabel(13)}</span><span>check-ins per day</span><span>${dayLabel(0)}</span></div>
+    ${[...EXAMPLE_HISTORY].reverse().map(historyRow).join('')}`;
+}
+
+function dayLabel(daysAgo) {
+  const day = new Date(Date.now() - daysAgo * 86400000);
+  return day.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function historyRow(h) {
+  const outcome = h.answer ? `chose "${esc(h.answer)}"` : 'expired, no answer';
+  return `<div class="row${h.answer ? '' : ' muted'}"><b>${dayLabel(h.daysAgo)} ${h.at.replace(':', '.')}</b> Drift ${h.sd.toFixed(1)} SD passed the 1 SD alarm → check-in sent → ${outcome}</div>`;
+}
+
+function nudgeRow({ nudge, response, state: status }, drift) {
   const chosen = nudge.card.options.find((o) => o.choice === response?.choice);
   const outcome = response ? `chose "${esc(chosen?.label ?? response.choice)}"` : status === 'open' ? 'no answer yet' : 'expired, no answer';
-  return `<div><b>Check-in ${hhmm(nudge.created_at)}</b> ${outcome}</div>`;
+  const sd = nudge.reason.match(/([\d.]+) SD/)?.[1];
+  const cause = sd ? `Drift ${sd} SD passed the ${drift?.config.warn ?? 1} SD alarm` : 'Drift passed the alarm';
+  return `<div class="row"><b>${hhmm(nudge.created_at)}</b> ${cause} → check-in sent → ${outcome}</div>`;
 }
 
 function field(label, value) {
@@ -483,6 +557,8 @@ $('down').onclick = () => step(1);
 $('sound').onclick = toggleSound;
 $('reset').onclick = reset;
 $('add').onsubmit = addShort;
+document.querySelectorAll('[role="tab"]').forEach((tab) => { tab.onclick = () => selectTab(tab); tab.onkeydown = onTabKey; });
+if (location.hash === '#clinician') selectTab($('tab-clinician'));   // a link can open the clinician's view
 document.addEventListener('keydown', (event) => {
   if (event.target.closest('input, textarea')) return;
   if (event.key === 'ArrowDown' || event.key === 'j') { event.preventDefault(); step(1); }
