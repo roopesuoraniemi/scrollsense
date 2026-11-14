@@ -4,12 +4,12 @@ import time
 
 from .domain import AnalyserLabel, VideoId
 from .ports import ContentAnalyser
-from .schemas import CRITERIA, SAFETY_CRITERION, STANCES, ClipScores, TextPackage
+from .schemas import A9_CRITERION, CRITERIA, STANCES, ClipScores, TextPackage
 
 
 class MockAnalyser(ContentAnalyser):
     """Deterministic placeholder output: text is marked [MOCK], scores are pseudo-random
-    per video and never include the A9 safety theme. Each call sleeps `delay_s` so the
+    per video and never score the A9 theme. Each call sleeps `delay_s` so the
     UI's progress stages are visible.
     """
 
@@ -34,7 +34,7 @@ class MockAnalyser(ContentAnalyser):
     def score(self, package: TextPackage) -> ClipScores:
         time.sleep(self.__delay_s)
         seed = package.title
-        themes = {c.key: self.__digit(seed, c.key) % 4 for c in CRITERIA if c != SAFETY_CRITERION}
+        themes = {c.key: self.__digit(seed, c.key) % 4 for c in CRITERIA if c != A9_CRITERION}
         return ClipScores(
             rationale="[MOCK] random scores, not an analysis", evidence="[MOCK] no evidence",
             negative_affect=self.__digit(seed, "n") % 4, positive_affect=self.__digit(seed, "p") % 4,

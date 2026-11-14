@@ -45,7 +45,7 @@ CRITERIA: tuple[Criterion, ...] = (
                     "'sewerslide', 'kms', 'kys', 'not wanting to be here', 'the last stage', "
                     "'disappear forever', 'go to sleep and not wake up', 'final exit'"),
 )
-SAFETY_CRITERION = CRITERIA[8]
+A9_CRITERION = CRITERIA[8]
 
 Format = Literal["talking_to_camera", "broll_with_text", "meme", "music_edit",
                  "skit", "tutorial", "animation", "animals_nature", "other"]

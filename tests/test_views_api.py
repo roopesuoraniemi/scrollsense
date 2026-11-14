@@ -5,16 +5,15 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from scrollsense.baselines import JsonBaselineStore
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.auth import BearerToken
-from scrollsense.intake import ViewIntake
+from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
 from scrollsense.viewlog import JsonlViewLog
 from scrollsense.views_api import ViewerReports, ViewsApi
 
-from .fakes import instant_mock, no_wait
+from .fakes import NoNudges, instant_mock, no_wait
 
 TOKEN = "s3cret"
 NOW = 1_000_000.0
@@ -26,7 +25,7 @@ def app(tmp_path: Path, token: str | None) -> FastAPI:
     queue = AnalysisQueue(AnalysisService(instant_mock(), store, time.time), store,
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
-    api = ViewsApi(ViewIntake(log, queue, JsonBaselineStore(tmp_path / "views")), ViewerReports(log, store, queue), lambda: NOW)
+    api = ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())), ViewerReports(log, store, queue), lambda: NOW)
     built = FastAPI()
     built.include_router(api.router(), dependencies=[Depends(BearerToken(token))] if token else [])
     return built
@@ -57,7 +56,7 @@ def test_post_views_then_feed_shows_scored_clips(client: TestClient) -> None:
     body["events"].append({"event_id": "x", "url": "https://example.com", "seen_at": NOW})
     response = client.post("/api/views", json=body)
     assert response.status_code == 202
-    assert response.json() == {"accepted": 2, "duplicates": 0, "queued": 2,
+    assert response.json() == {"accepted": 2, "duplicates": 0, "queued": 2, "nudge": None,
                                "rejected": [{"event_id": "x", "reason": "Not a YouTube video ID: "
                                              "'https://example.com'"}]}
     feed = wait_scored(client, "patient-01")

@@ -1,33 +1,46 @@
-"""Accepting batches of view events: validate, dedupe against the log, record, queue analysis."""
+"""Accepting batches of view events: validate, dedupe against the log, record, queue analysis,
+and offer any nudge that is due."""
+from dataclasses import dataclass
 from threading import Lock
 
 from .analysis_queue import AnalysisQueue
-from .ports import BaselineStore, ViewLog
+from .nudge import NudgeCard
+from .ports import Nudger, ViewLog
 from .schemas import Frozen
 from .views import EVER, Rejection, ViewBatch, ViewerId, fresh, parse_events
 
 
 class Receipt(Frozen):
     """`accepted` new events were logged, `duplicates` repeated known ones, and `queued`
-    videos were newly sent for analysis."""
+    videos were newly sent for analysis. `nudge` is the viewer's open card, if any."""
 
     accepted: int
     duplicates: int
     queued: int
     rejected: tuple[Rejection, ...]
+    nudge: NudgeCard | None = None
+
+
+@dataclass(frozen=True)
+class ViewerExtras:
+    """Per-viewer state kept beside the view log: erased with it, and `nudges` is asked for a
+    card after each batch."""
+
+    nudges: Nudger
 
 
 class ViewIntake:
     """Records client batches. Only `shorts` events are analysed; the rest are just logged."""
 
-    def __init__(self, log: ViewLog, queue: AnalysisQueue, baselines: BaselineStore) -> None:
+    def __init__(self, log: ViewLog, queue: AnalysisQueue, extras: ViewerExtras) -> None:
         self.__log = log
         self.__queue = queue
-        self.__baselines = baselines
+        self.__extras = extras
         self.__lock = Lock()
 
     def record(self, batch: ViewBatch) -> Receipt:
         """Atomically log the batch's new events and queue their videos; reports what happened.
+        Then issues a nudge if one is due (see `Nudger.issue_if_due`) and returns the open one.
 
         Raises ValueError if `batch.viewer` is not a valid pseudonym. Idempotent per event id,
         so a client may resend a batch whose response it never received.
@@ -38,12 +51,13 @@ class ViewIntake:
             new = fresh(self.__log.between(viewer, EVER), parsed.events)
             self.__log.append(new)
         queued = [self.__queue.enqueue_if_new(e.video) for e in new if e.surface == "shorts"]
+        nudge = self.__extras.nudges.issue_if_due(viewer)
         return Receipt(accepted=len(new), duplicates=len(parsed.events) - len(new),
-                       queued=sum(queued), rejected=parsed.rejected)
+                       queued=sum(queued), rejected=parsed.rejected, nudge=nudge)
 
     def erase(self, viewer: ViewerId) -> None:
-        """Delete `viewer`'s view log and baseline mark (GDPR erasure); waits for any batch
+        """Delete `viewer`'s view log and nudges (GDPR erasure); waits for any batch
         being recorded. Shared clip analyses are kept: they describe public videos, not the viewer."""
         with self.__lock:
             self.__log.erase(viewer)
-            self.__baselines.clear(viewer)
+            self.__extras.nudges.erase(viewer)

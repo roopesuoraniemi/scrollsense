@@ -1,10 +1,10 @@
 """Print one viewer's drift report in the terminal, for tuning thresholds without the UI.
 
-Usage:  uv run python -m scrollsense.drift <viewer> [--window N] [--baseline-n N]
-            [--min-baseline N] [--watch X] [--warn Y] [--data DIR]
+Usage:  uv run python -m scrollsense.drift <viewer> [--window N] [--watch X] [--warn Y]
+            [--data DIR]
 
 Flags override the SCROLLSENSE_* environment values (and `.env`); `--data` replaces
-SCROLLSENSE_DATA. Read-only: it never marks a baseline or analyses anything.
+SCROLLSENSE_DATA. Read-only: it never analyses anything.
 """
 import argparse
 from dataclasses import dataclass
@@ -12,14 +12,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-from ..baselines import JsonBaselineStore
+from ..affect_norms import load_affect_norms
 from ..composition import ROOT, DataDirs, Settings
 from ..drift_api import FeedObserver
 from ..schemas import Frozen
 from ..store import JsonFileStore
 from ..views import ViewerId
 from ..viewlog import JsonlViewLog
-from .core import DriftConfig, DriftDetector, DriftReport, FeatureRow, TimelinePoint
+from .affect import FeatureRow
+from .clinical import ClinicalExposure, ClinicalItem
+from .core import DriftConfig, DriftDetector, DriftReport, TimelinePoint
 
 
 @dataclass(frozen=True)
@@ -33,8 +35,6 @@ class Override:
 
 OVERRIDES: tuple[Override, ...] = (
     Override("--window", int, "window"),
-    Override("--baseline-n", int, "baseline_n"),
-    Override("--min-baseline", int, "min_baseline"),
     Override("--watch", float, "watch"),
     Override("--warn", float, "warn"),
 )
@@ -47,8 +47,6 @@ class CliArgs(Frozen):
 
     viewer: str
     window: int | None = None
-    baseline_n: int | None = None
-    min_baseline: int | None = None
     watch: float | None = None
     warn: float | None = None
     data: Path | None = None
@@ -76,35 +74,51 @@ def clock(moment: float | None) -> str:
 
 
 def feature_line(row: FeatureRow) -> str:
-    return (f"  {row.label:<16} {row.weight:>4.1f} {'+' if row.direction > 0 else '-':>3} "
-            f"{row.baseline_mean:>8.2f} {row.baseline_sd:>6.2f} {row.recent_mean:>7.2f} "
+    return (f"  {row.name:<10} {'+' if row.direction > 0 else '-':>3} "
+            f"{row.norm_mean:>6.2f} {row.norm_sd:>6.2f} {row.recent_mean:>7.2f} "
             f"{row.effect:>7.2f} {row.risk_effect:>6.2f}")
+
+
+def item_line(item: ClinicalItem) -> str:
+    return (f"  {item.code} {item.label:<24} {item.present:>3} {item.share:>6.2f} "
+            f"{item.score:>3}  {item.frequency_label}")
 
 
 def timeline_line(point: TimelinePoint) -> str:
     filled = round(min(point.score, BAR_FULL_SCALE) / BAR_FULL_SCALE * BAR_WIDTH)
-    return f"  {clock(point.seen_at)}  {point.score:5.2f} {'#' * filled:<{BAR_WIDTH}} {point.level}"
+    return (f"  {clock(point.seen_at)}  {point.score:5.2f} {'#' * filled:<{BAR_WIDTH}} "
+            f"PHQ {point.exposure:>2}  {point.level}")
+
+
+def clinical_lines(clinical: ClinicalExposure | None) -> list[str]:
+    if clinical is None:
+        return ["clinical: no analysed Shorts yet"]
+    return [f"clinical (content exposure, PHQ-9 style, over {clinical.window_n} Shorts): "
+            f"{clinical.total}/27 {clinical.band}, pattern {clinical.pattern}",
+            "  item                         n  share score frequency",
+            *map(item_line, clinical.items), f"  {clinical.reference}"]
 
 
 def render(report: DriftReport) -> str:
-    """The report as plain text: verdict, reasons, feature table, evidence, safety, timeline."""
-    c, b, r = report.config, report.baseline, report.recent
+    """The report as plain text: verdict, reasons, affect table, clinical items, evidence,
+    timeline."""
+    c, n, r = report.config, report.affect_baseline, report.recent
     score = f"{report.score:.2f}" if report.score is not None else "-"
-    head = [f"{report.viewer}: {report.level.upper()}  score {score}  (watch >= {c.watch}, "
-            f"warn >= {c.warn}; window {c.window}, baseline {c.baseline_n}, min {c.min_baseline})",
-            f"{report.note}. Not a diagnosis.",
-            f"baseline: {b.source}, {b.n}/{b.target} Shorts, {clock(b.first_seen_at)} to "
-            f"{clock(b.last_seen_at)}; recent: {r.n} Shorts since {clock(r.first_seen_at)}; "
-            f"pending analysis: {report.pending}"]
-    table = ["features:", "  feature          wt  dir baseline     sd  recent  effect   risk",
+    head = [f"{report.viewer}: {report.level.upper()}  affect {report.affect_level} "
+            f"(score {score} SD into the bottom left; watch > {c.watch}, warn > {c.warn})  clinical "
+            f"{report.clinical_level}  (window {c.window})",
+            f"{report.note}. Describes the content shown; not a diagnosis.",
+            f"recent: {r.n} Shorts since {clock(r.first_seen_at)}; pending analysis: "
+            f"{report.pending}; affect norm: {n.source}"]
+    table = ["affect vs norm:", "  feature     dir   norm     sd  recent  effect   risk",
              *map(feature_line, report.features)]
     return "\n".join([*head, *__listing("reasons", report.reasons), *table,
-                      *__listing("evidence", [f"{e.video_id} risk {e.risk:.2f}: {e.title}"
+                      *clinical_lines(report.clinical),
+                      *__listing("evidence", [f"{e.video_id} {'/'.join(e.central) or '-'} "
+                                              f"risk {e.risk:.2f}: {e.title}"
                                               for e in report.evidence]),
-                      *__listing("SAFETY (A9)", [f"{s.video_id} A9={s.a9}: {s.title}"
-                                                 for s in report.safety]),
-                      f"timeline (score of the last {c.window} Shorts at each Short after the "
-                      "baseline):", *map(timeline_line, report.timeline)])
+                      f"timeline (affect score and PHQ-9-style exposure of the last {c.window} "
+                      "Shorts at each Short):", *map(timeline_line, report.timeline)])
 
 
 def __listing(title: str, lines: Sequence[str]) -> list[str]:
@@ -119,6 +133,5 @@ def main(argv: Sequence[str]) -> None:
         clips=settings.data_dir, views=settings.views_dir)
     viewer = ViewerId(args.viewer)
     observer = FeedObserver(JsonlViewLog(dirs.views), JsonFileStore(dirs.clips))
-    detector = DriftDetector(args.config(settings.drift))
-    mark = JsonBaselineStore(dirs.views).mark_of(viewer)
-    print(render(detector.report(viewer.value, observer.observed(viewer), mark)))
+    detector = DriftDetector(args.config(settings.drift), load_affect_norms().baseline)
+    print(render(detector.report(viewer.value, observer.observed(viewer))))

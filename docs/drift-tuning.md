@@ -1,5 +1,11 @@
 # Drift threshold tuning (14 Nov 2026)
 
+> **Superseded** by `docs/clinical-calibration.md`. The personal baseline (`SCROLLSENSE_BASELINE_N`,
+> *Set baseline now*), the features negative affect, theme load and dwelling stance, and the
+> thresholds below (watch 1.2, warn 1.5) are gone: drift is now measured against published word-affect
+> norms and a PHQ-9-style content score. Kept for the method, the test set and the Gemini
+> RECITATION fix at the end, which still apply.
+
 **Defaults:** `SCROLLSENSE_DRIFT_WINDOW=10`, `SCROLLSENSE_DRIFT_WATCH=1.2`, `SCROLLSENSE_DRIFT_WARN=1.5`, `SCROLLSENSE_BASELINE_N=20`.
 
 ## Method

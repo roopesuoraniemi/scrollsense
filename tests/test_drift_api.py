@@ -7,21 +7,20 @@ from fastapi.testclient import TestClient
 
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.auth import BearerToken
-from scrollsense.baselines import JsonBaselineStore
-from scrollsense.drift.core import BaselineMark, DriftConfig, DriftDetector
+from scrollsense.drift.core import DriftConfig, DriftDetector
 from scrollsense.drift_api import DriftApi, FeedObserver, ViewerDrift
-from scrollsense.intake import ViewIntake
+from scrollsense.intake import ViewerExtras, ViewIntake
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
 from scrollsense.viewlog import JsonlViewLog
-from scrollsense.views import ViewerId
 from scrollsense.views_api import ViewerReports, ViewsApi
 
-from .fakes import instant_mock, no_wait
+from .fakes import NoNudges, instant_mock, no_wait
+from .test_drift import NORM
 from .test_views_api import NOW, TOKEN, batch, wait_scored
 
-CONFIG = DriftConfig(baseline_n=8, min_baseline=4, window=4)
-VIDEOS = [f"vid{i:08d}" for i in range(14)]
+CONFIG = DriftConfig(window=4)
+VIDEOS = [f"vid{i:08d}" for i in range(6)]
 
 
 def routers(tmp_path: Path) -> list[APIRouter]:
@@ -30,10 +29,10 @@ def routers(tmp_path: Path) -> list[APIRouter]:
     queue = AnalysisQueue(AnalysisService(instant_mock(), store, time.time), store,
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
-    baselines = JsonBaselineStore(tmp_path / "views")
-    drift = ViewerDrift(FeedObserver(log, store), baselines, DriftDetector(CONFIG))
-    return [ViewsApi(ViewIntake(log, queue, baselines), ViewerReports(log, store, queue), lambda: NOW).router(),
-            DriftApi(drift, lambda: NOW).router()]
+    drift = ViewerDrift(FeedObserver(log, store), DriftDetector(CONFIG, NORM))
+    return [ViewsApi(ViewIntake(log, queue, ViewerExtras(NoNudges())),
+                     ViewerReports(log, store, queue), lambda: NOW).router(),
+            DriftApi(drift).router()]
 
 
 def app(tmp_path: Path, token: str | None) -> FastAPI:
@@ -48,65 +47,46 @@ def client(tmp_path: Path) -> TestClient:
     return TestClient(app(tmp_path, None))
 
 
-def test_baseline_store_round_trip(tmp_path: Path) -> None:
-    store = JsonBaselineStore(tmp_path / "views")
-    viewer = ViewerId("patient-01")
-    mark = BaselineMark(video_ids=("aaaaaaaaaaa", "bbbbbbbbbbb"), marked_at=12.5)
-    store.mark(viewer, mark)
-    assert store.mark_of(viewer) == mark and store.mark_of(ViewerId("control-01")) is None
-    assert sorted(p.name for p in (tmp_path / "views").iterdir()) == ["patient-01.baseline.json"]
-    store.clear(viewer)
-    store.clear(viewer)   # idempotent
-    assert store.mark_of(viewer) is None
-
-
 def test_drift_report_shape_while_learning(client: TestClient) -> None:
-    client.post("/api/views", json=batch("patient-01", *VIDEOS[:3]))
+    client.post("/api/views", json=batch("patient-01", VIDEOS[0]))
     wait_scored(client, "patient-01")
     body = client.get("/api/viewers/patient-01/drift").json()
-    assert body["level"] == "learning" and body["note"] == "Learning normal: 3/8 Shorts"
+    assert body["level"] == "learning" and body["note"] == "Collecting recent Shorts: 1/2 analysed"
     assert body["config"] == CONFIG.model_dump() and body["pending"] == 0
-    assert body["baseline"]["source"] == "default" and body["baseline"]["n"] == 3
-    assert set(body) >= {"score", "recent", "features", "reasons", "evidence", "safety", "timeline"}
+    assert body["affect_baseline"] == NORM.model_dump() and "baseline" not in body
+    assert body["clinical"]["window_n"] == 1 and len(body["timeline"]) == 1
+    assert "safety" not in body
 
 
-def test_marking_too_early_is_409(client: TestClient) -> None:
-    client.post("/api/views", json=batch("patient-01", *VIDEOS[:3]))
-    wait_scored(client, "patient-01")
-    assert client.post("/api/viewers/patient-01/baseline").status_code == 409
-
-
-def test_mark_and_reset_baseline(client: TestClient) -> None:
+def test_judged_report_carries_both_yardsticks(client: TestClient) -> None:
     client.post("/api/views", json=batch("patient-01", *VIDEOS))
     wait_scored(client, "patient-01")
-    judged = client.get("/api/viewers/patient-01/drift").json()
-    assert judged["level"] in {"normal", "watch", "warning"} and len(judged["timeline"]) == 6
-    assert client.post("/api/viewers/patient-01/baseline", json={"size": 5}).status_code == 204
-    marked = client.get("/api/viewers/patient-01/drift").json()
-    assert (marked["baseline"]["source"], marked["baseline"]["n"], marked["recent"]["n"]) == (
-        "marked", 5, 0) and marked["level"] == "learning"
-    assert client.delete("/api/viewers/patient-01/baseline").status_code == 204
-    assert client.get("/api/viewers/patient-01/drift").json()["baseline"]["source"] == "default"
+    body = client.get("/api/viewers/patient-01/drift").json()
+    assert body["level"] in {"normal", "watch", "warning"} and len(body["timeline"]) == 6
+    assert {body["affect_level"], body["clinical_level"]} <= {"normal", "watch", "warning"}
+    clinical = body["clinical"]
+    assert set(clinical) == {"window_n", "items", "total", "band", "pattern", "reference"}
+    assert clinical["window_n"] == 4 and [i["code"] for i in clinical["items"]][0] == "A1"
+    assert set(clinical["items"][0]) == {"code", "label", "present", "share", "score",
+                                         "frequency_label"}
 
 
-def test_erasing_a_viewer_also_removes_the_baseline_mark(client: TestClient, tmp_path: Path) -> None:
+def test_timeline_and_affect_rows_shape(client: TestClient) -> None:
     client.post("/api/views", json=batch("patient-01", *VIDEOS))
     wait_scored(client, "patient-01")
-    client.post("/api/viewers/patient-01/baseline", json={"size": 5})
-    assert client.delete("/api/viewers/patient-01").status_code == 204
-    assert not (tmp_path / "views" / "patient-01.baseline.json").exists()
+    body = client.get("/api/viewers/patient-01/drift").json()
+    assert set(body["timeline"][0]) == {"video_id", "seen_at", "score", "exposure", "level"}
+    assert [f["name"] for f in body["features"]] == ["valence", "arousal"]
 
 
-def test_bad_viewer_and_size(client: TestClient) -> None:
+def test_baseline_routes_are_gone_and_bad_viewers_are_400(client: TestClient) -> None:
     assert client.get("/api/viewers/Bob/drift").status_code == 400
-    assert client.post("/api/viewers/patient-01/baseline", json={"size": 0}).status_code == 422
-    assert client.delete("/api/viewers/Bob/baseline").status_code == 400
+    assert client.post("/api/viewers/patient-01/baseline").status_code in {404, 405}
+    assert client.delete("/api/viewers/patient-01/baseline").status_code in {404, 405}
 
 
 def test_drift_routes_need_the_token(tmp_path: Path) -> None:
     client = TestClient(app(tmp_path, TOKEN))
     assert client.get("/api/viewers/patient-01/drift").status_code == 401
-    assert client.post("/api/viewers/patient-01/baseline").status_code == 401
-    assert client.delete("/api/viewers/patient-01/baseline").status_code == 401
     auth = {"Authorization": f"Bearer {TOKEN}"}
     assert client.get("/api/viewers/patient-01/drift", headers=auth).status_code == 200

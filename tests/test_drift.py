@@ -1,24 +1,32 @@
+import math
 from typing import Sequence
 
 import pytest
 
+from scrollsense.affect_norms import load_affect_norms
 from scrollsense.domain import ClipAnalysis, Embedding
-from scrollsense.drift.core import (FEATURES, BaselineMark, DriftConfig, DriftDetector, Observed,
-                                    observe)
+from scrollsense.drift.affect import FEATURES
+from scrollsense.drift.core import DriftConfig, DriftDetector, DriftReport
+from scrollsense.drift.levels import most_severe
+from scrollsense.drift.observe import Observed, observe
 from scrollsense.schemas import CRITERIA, ClipScores, TextPackage
 from scrollsense.views import ViewEvent
 
 from .fakes import label
 
+NORMS = load_affect_norms()
+NORM = NORMS.baseline
 # valence 4, arousal 3, no negative affect, no themes, unrelated stance.
 NEUTRAL = ClipScores(rationale="r", evidence="calm", negative_affect=0, positive_affect=2,
                      arousal=3, stance="unrelated", hopeful=False, **{c.key: 0 for c in CRITERIA})
-# valence 1, arousal 1, negative affect 3, theme load 6, dwelling.
+# valence 1, arousal 1, depressed mood and anhedonia intense.
 SAD = NEUTRAL.model_copy(update={"negative_affect": 3, "positive_affect": 0, "arousal": 1,
                                  "stance": "dwelling_or_romanticising", "a1_depressed_mood": 3,
                                  "a2_anhedonia": 3})
 HAPPY = NEUTRAL.model_copy(update={"positive_affect": 3, "arousal": 5})
-SMALL = DriftConfig(baseline_n=8, min_baseline=8, window=4)
+# Upbeat delivery (valence 4, arousal 3), but five criteria are central themes.
+THEMED = NEUTRAL.model_copy(update={c.key: 2 for c in CRITERIA[:5]})
+SMALL = DriftConfig(window=4)
 
 
 def vid(i: int) -> str:
@@ -45,12 +53,23 @@ def feed(clips: Sequence[ClipScores]) -> Observed:
     return observe([view(i, 10.0 * i) for i in range(len(clips))], analyses)
 
 
-def test_features_follow_the_spec() -> None:
-    values = {f.name: (f.extract(SAD), f.direction, f.weight, f.sd_floor) for f in FEATURES}
-    assert values == {"valence": (1, -1, 1.0, 0.5), "arousal": (1, -1, 0.5, 0.5),
-                      "negative_affect": (3, 1, 1.0, 0.5), "theme_load": (6, 1, 1.0, 1.5),
-                      "dwelling": (1.0, 1, 1.0, 0.15)}
-    assert {f.name: f.extract(NEUTRAL) for f in FEATURES}["dwelling"] == 0.0
+def judge(clips: Sequence[ClipScores], config: DriftConfig = SMALL) -> DriftReport:
+    return DriftDetector(config, NORM).report("patient-01", feed(clips))
+
+
+def test_norms_json_holds_the_mapped_warriner_baseline_and_its_sources() -> None:
+    assert (NORM.centre.valence, NORM.centre.arousal) == (3.032, 2.605)
+    assert (NORM.sd.valence, NORM.sd.arousal) == (0.637, 0.448)
+    warriner, nrc = NORMS.sources
+    assert (warriner.n_words, warriner.valence.mean, warriner.arousal.sd) == (13915, 5.0638, 0.8964)
+    assert (nrc.n_words, nrc.valence.mapped_sd, nrc.arousal.mapped_sd) == (19971, 0.863, 0.684)
+    assert (NORMS.cross_check.n_shared_words, NORMS.cross_check.r_valence) == (13855, 0.814)
+    assert "non-commercial" in nrc.licence and NORM.cite == "Warriner 2013"
+
+
+def test_features_are_falls_in_valence_and_arousal() -> None:
+    values = {f.name: (f.extract(SAD), f.direction, f.spread(NORM)) for f in FEATURES}
+    assert values == {"valence": (1, -1, 0.637), "arousal": (1, -1, 0.448)}
 
 
 def test_observe_keeps_first_views_in_seen_order_and_counts_pending() -> None:
@@ -62,106 +81,103 @@ def test_observe_keeps_first_views_in_seen_order_and_counts_pending() -> None:
     assert result.pending == 1
 
 
-def test_default_baseline_is_the_first_n_and_drift_is_scored() -> None:
-    report = DriftDetector(SMALL).report("patient-01", feed([NEUTRAL] * 8 + [SAD] * 4), None)
-    assert (report.baseline.n, report.baseline.source, report.recent.n) == (8, "default", 4)
-    assert report.baseline.centroid is not None and report.baseline.centroid.valence == 4.0
-    assert report.recent.first_seen_at == 80.0 and report.level == "warning"
-    # Uniform baseline, so every SD is floored: (6 + 0.5*4 + 6 + 4 + 1/0.15) / 4.5.
-    assert report.score == pytest.approx((6 + 2 + 6 + 4 + 1 / 0.15) / 4.5)
-    assert report.reasons[0] == "dwelling stance 6.7 SD above normal (1.0 vs 0.0)"
-    assert len(report.reasons) == 3
-
-
-def test_sd_floor_and_population_sd() -> None:
-    lower = NEUTRAL.model_copy(update={"positive_affect": 0})   # valence 4 -> 3
-    report = DriftDetector(SMALL).report("p", feed([NEUTRAL] * 8 + [lower] * 4), None)
+def test_affect_score_is_the_drift_length_in_research_sds() -> None:
+    calm_low = NEUTRAL.model_copy(update={"positive_affect": 0, "arousal": 2})  # valence 3
+    report = judge([calm_low] * 4)
     rows = {r.name: r for r in report.features}
-    assert rows["valence"].effect == pytest.approx(-2.0) and rows["valence"].risk_effect == 2.0
-    assert report.score == pytest.approx(2.0 / 4.5) and report.level == "normal"
-    spread = DriftDetector(SMALL).report("p", feed([NEUTRAL, SAD] * 4 + [SAD] * 4), None)
-    valence = {r.name: r for r in spread.features}["valence"]
-    assert valence.baseline_sd == pytest.approx(1.5)
-    assert valence.effect == pytest.approx((1 - 2.5) / 1.5)
+    assert rows["valence"].effect == pytest.approx((3 - 3.032) / 0.637)
+    assert rows["arousal"].effect == pytest.approx((2 - 2.605) / 0.448)
+    assert rows["arousal"].norm_sd == 0.448 and rows["arousal"].norm_mean == 2.605
+    expected = math.hypot((3 - 3.032) / 0.637, (2 - 2.605) / 0.448)
+    assert report.score == pytest.approx(expected) and report.affect_level == "warning"
+    assert report.affect_baseline == NORM
+
+
+def test_affect_deviates_only_past_1_sd_in_the_bottom_left_quadrant() -> None:
+    flat = NEUTRAL.model_copy(update={"positive_affect": 0})  # valence 3, arousal 3
+    within = judge([flat, flat.model_copy(update={"arousal": 2})] * 2)  # mean arousal 2.5
+    assert 0 < (within.score or 0) <= 1 and within.affect_level == "normal"
+    agitated_sad = SAD.model_copy(update={"arousal": 5})  # valence 1, arousal 5: top left
+    assert judge([agitated_sad] * 4).score == 0.0
+    calm_happy = HAPPY.model_copy(update={"arousal": 1})  # valence 5, arousal 1: bottom right
+    assert judge([calm_happy] * 4).affect_level == "normal"
+
+
+def test_affect_reasons_follow_the_affect_level_and_skip_negligible_moves() -> None:
+    calm_low = NEUTRAL.model_copy(update={"positive_affect": 0, "arousal": 2})  # valence 3
+    assert judge([calm_low] * 4).reasons == (
+        "valence and arousal 1.4 SD from the norm towards the bottom left "
+        "(valence 3.0 vs 3.03, arousal 2.0 vs 2.60, Warriner 2013)",)
+    assert judge([calm_low] * 4, DriftConfig(window=4, watch=5, warn=6)).reasons == ()
 
 
 def test_moves_in_the_safe_direction_never_count() -> None:
-    report = DriftDetector(SMALL).report("p", feed([NEUTRAL] * 8 + [HAPPY] * 4), None)
+    report = judge([HAPPY] * 4)
     assert report.score == 0.0 and report.level == "normal" and report.reasons == ()
-    assert report.evidence == ()
+    assert report.evidence == () and report.clinical is not None and report.clinical.total == 0
 
 
 def test_levels_at_thresholds() -> None:
-    config = DriftConfig(watch=0.8, warn=1.5)
-    assert [config.level_of(s) for s in (0.0, 0.7999, 0.8, 1.4999, 1.5, 9.0)] == [
-        "normal", "normal", "watch", "watch", "warning", "warning"]
+    assert [DriftConfig().level_of(s) for s in (0.0, 1.0, 1.0001)] == [
+        "normal", "normal", "warning"]
+    config = DriftConfig(watch=1.0, warn=1.5)
+    assert [config.level_of(s) for s in (1.0, 1.0001, 1.5, 1.5001, 9.0)] == [
+        "normal", "watch", "watch", "warning", "warning"]
+    with pytest.raises(ValueError):
+        DriftConfig(watch=0.5)
 
 
 def test_config_from_env_and_validation() -> None:
     config = DriftConfig.from_env({"SCROLLSENSE_DRIFT_WINDOW": "7", "SCROLLSENSE_DRIFT_WARN": "2.5",
-                                   "SCROLLSENSE_BASELINE_N": ""})
-    assert (config.window, config.warn, config.baseline_n, config.min_recent) == (7, 2.5, 20, 4)
+                                   "SCROLLSENSE_BASELINE_N": "20"})
+    assert (config.window, config.warn, config.min_recent) == (7, 2.5, 4)
+    assert (DriftConfig().window, DriftConfig().min_recent) == (10, 5)
     with pytest.raises(ValueError):
         DriftConfig.from_env({"SCROLLSENSE_DRIFT_WATCH": "2", "SCROLLSENSE_DRIFT_WARN": "1"})
-    with pytest.raises(ValueError):
-        DriftConfig(baseline_n=5, min_baseline=8)
 
 
-def test_learning_until_baseline_and_recent_window_fill() -> None:
-    detector = DriftDetector(DriftConfig())
-    early = detector.report("p", feed([NEUTRAL] * 12), None)
-    assert (early.level, early.note, early.score) == ("learning", "Learning normal: 12/20 Shorts", None)
-    assert early.timeline == () and early.features == ()
-    filling = detector.report("p", feed([NEUTRAL] * 20 + [SAD] * 4), None)
-    assert filling.level == "learning" and filling.score is not None
-    assert filling.note == "Normal learned from 20 Shorts; collecting recent ones: 4/5"
-    assert detector.report("p", feed([NEUTRAL] * 20 + [SAD] * 5), None).level == "warning"
+def test_learning_only_until_half_the_window_and_heavy_from_the_start_is_flagged() -> None:
+    early = judge([SAD] * 4, DriftConfig())
+    assert (early.level, early.note) == ("learning", "Collecting recent Shorts: 4/5 analysed")
+    assert early.score is not None and early.clinical is not None
+    assert judge([], DriftConfig()).clinical is None
+    assert judge([SAD] * 5, DriftConfig()).level == "warning"
 
 
-def test_marked_baseline_is_the_most_recent_n_at_marking() -> None:
-    detector = DriftDetector(SMALL)
-    history = [NEUTRAL] * 8 + [SAD] * 8
-    mark = detector.mark(feed(history), None, now=500.0)
-    assert mark.video_ids == tuple(vid(i) for i in range(8, 16)) and mark.marked_at == 500.0
-    later = detector.report("p", feed(history + [SAD] * 4), mark)
-    assert (later.baseline.source, later.baseline.n, later.recent.n) == ("marked", 8, 4)
-    assert later.level == "normal" and later.score == 0.0
-    assert later.baseline.first_seen_at == 80.0
-    assert detector.report("p", feed(history + [SAD] * 4), None).level == "warning"
+def test_overall_level_is_the_more_severe_of_affect_and_clinical() -> None:
+    sad = judge([SAD] * 4)
+    assert (sad.affect_level, sad.clinical_level, sad.level) == ("warning", "watch", "warning")
+    themed = judge([THEMED] * 4)
+    assert (themed.affect_level, themed.clinical_level, themed.level) == (
+        "normal", "warning", "warning")
+    assert themed.clinical is not None and themed.clinical.pattern == "major"
+    two = judge([NEUTRAL.model_copy(update={"a1_depressed_mood": 2, "a4_sleep": 2})] * 4)
+    assert (two.affect_level, two.clinical_level, two.level) == ("normal", "watch", "watch")
+    assert most_severe(["learning", "normal"]) == "normal"
 
 
-def test_marking_needs_enough_analysed_shorts() -> None:
-    detector = DriftDetector(SMALL)
-    with pytest.raises(ValueError):
-        detector.mark(feed([NEUTRAL] * 7), None, now=0.0)
-    with pytest.raises(ValueError):
-        detector.mark(feed([NEUTRAL] * 20), 3, now=0.0)
-    assert len(detector.mark(feed([NEUTRAL] * 20), 10, now=0.0).video_ids) == 10
+def test_reasons_name_the_clinical_exposure_then_affect() -> None:
+    report = judge([SAD] * 4)
+    assert report.reasons == (
+        "PHQ-9-style content exposure 6/27 (mild, pattern other): depressed mood nearly every "
+        "day, anhedonia nearly every day",
+        "valence and arousal 4.8 SD from the norm towards the bottom left "
+        "(valence 1.0 vs 3.03, arousal 1.0 vs 2.60, Warriner 2013)",)
+    assert report.note == "Heavy with depressive content"
 
 
-def test_a_mark_whose_shorts_are_gone_is_learning() -> None:
-    gone = BaselineMark(video_ids=("zzzzzzzzzzz",), marked_at=0.0)
-    report = DriftDetector(SMALL).report("p", feed([NEUTRAL] * 12), gone)
-    assert (report.level, report.baseline.n, report.baseline.target) == ("learning", 0, 1)
-
-
-def test_timeline_scores_the_window_ending_at_each_short_after_the_baseline() -> None:
-    report = DriftDetector(SMALL).report("p", feed([NEUTRAL] * 8 + [NEUTRAL, SAD, SAD, SAD, SAD]),
-                                         None)
+def test_timeline_judges_the_window_ending_at_every_short() -> None:
+    report = judge([NEUTRAL] * 4 + [SAD] * 4)
     timeline = report.timeline
-    assert [p.seen_at for p in timeline] == [80.0, 90.0, 100.0, 110.0, 120.0]
-    assert [p.level for p in timeline][:2] == ["learning", "warning"]
-    assert timeline[0].score == 0.0 and timeline[1].score > 0
+    assert [p.seen_at for p in timeline] == [10.0 * i for i in range(8)]
+    assert [p.level for p in timeline] == ["learning"] + ["normal"] * 4 + ["warning"] * 3
+    assert [p.exposure for p in timeline][-4:] == [2, 2, 4, 6]
     assert timeline[-1].score == pytest.approx(report.score)
 
 
-def test_evidence_ranks_risky_recent_shorts_and_safety_is_always_on() -> None:
-    a9 = NEUTRAL.model_copy(update={"a9_death_suicide": 1, "evidence": "unalive"})
-    report = DriftDetector(SMALL).report("p", feed([NEUTRAL] * 8 + [NEUTRAL, HAPPY, a9, SAD]),
-                                         None)
-    assert [e.video_id for e in report.evidence] == [vid(11), vid(10)]
-    assert report.evidence[0].risk > report.evidence[1].risk > 0
-    assert report.evidence[0].stance == "dwelling_or_romanticising"
-    learning = DriftDetector(DriftConfig()).report("p", feed([NEUTRAL, a9]), None)
-    assert learning.level == "learning"
-    assert [(s.video_id, s.a9, s.evidence) for s in learning.safety] == [(vid(1), 1, "unalive")]
+def test_evidence_ranks_central_themes_then_affect() -> None:
+    low = NEUTRAL.model_copy(update={"positive_affect": 0, "arousal": 2})  # valence 3, no themes
+    report = judge([NEUTRAL, low, SAD, THEMED])
+    assert [e.video_id for e in report.evidence] == [vid(3), vid(2), vid(1)]
+    assert report.evidence[0].central == ("A1", "A2", "A3", "A4", "A5")
+    assert report.evidence[1].central == ("A1", "A2") and report.evidence[2].risk > 0

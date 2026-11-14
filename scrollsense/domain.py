@@ -2,7 +2,6 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Sequence
 
 import numpy as np
 
@@ -95,29 +94,25 @@ class Point(Frozen):
     y: float
 
 
-def semantic_points(analyses: Sequence[ClipAnalysis]) -> dict[str, Point]:
-    """2-D PCA of the analyses' embeddings, keyed by video ID, each axis scaled to [-1, 1].
+class ContentAxis(Frozen):
+    """Fixed content-similarity axes, built by `scripts/build_content_axis.py` from labelled
+    test Shorts. x is 0 at the light centroid and 1 at the depression-themed one; y is the main
+    remaining topic direction in SD units. It describes content, never a person."""
 
-    Analyses without an embedding are left out; fewer than two embeddings all map to the
-    origin. Axes are relative: adding a clip can rotate or flip them.
-    """
-    embedded = [a for a in analyses if a.embedding.vector]
-    if len(embedded) < 2:
-        return {a.video_id: Point(x=0.0, y=0.0) for a in embedded}
-    coords = __project(__centred([a.embedding.vector or () for a in embedded]))
-    return {a.video_id: Point(x=round(float(x), 4), y=round(float(y), 4))
-            for a, (x, y) in zip(embedded, coords)}
+    embed_model: str
+    x: tuple[float, ...]
+    x_light: float
+    x_heavy: float
+    y: tuple[float, ...]
+    y_mean: float
+    y_sd: float
 
-
-def __centred(vectors: list[tuple[float, ...]]) -> np.ndarray:
-    dim = min(len(v) for v in vectors)
-    matrix = np.array([v[:dim] for v in vectors], dtype=float)
-    return matrix - matrix.mean(axis=0)
-
-
-def __project(centred: np.ndarray) -> np.ndarray:
-    _, _, vt = np.linalg.svd(centred, full_matrices=False)
-    projected = centred @ vt[:2].T
-    if projected.shape[1] < 2:  # two clips give one component; pad the second axis
-        projected = np.hstack([projected, np.zeros((projected.shape[0], 1))])
-    return projected / (np.abs(projected).max(axis=0) + 1e-9)
+    def project(self, analysis: ClipAnalysis) -> Point | None:
+        """Where `analysis` sits on the axes; None without an embedding from the same model."""
+        vector = analysis.embedding.vector
+        if analysis.analyser.embed_name != self.embed_model or not vector or len(vector) != len(self.x):
+            return None
+        unit = np.asarray(vector) / (np.linalg.norm(vector) or 1.0)
+        across = (float(unit @ np.asarray(self.x)) - self.x_light) / (self.x_heavy - self.x_light)
+        topic = (float(unit @ np.asarray(self.y)) - self.y_mean) / self.y_sd
+        return Point(x=round(across, 4), y=round(topic, 4))

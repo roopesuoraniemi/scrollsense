@@ -7,7 +7,7 @@ Paste a public YouTube Shorts URL. The app shows four things:
 3. **The clip's point in embedded space**, with two views:
    - *Affect space*: valence × arousal from the stage-2 scores. Valence is derived in code from the model's negative and positive affect scores (0–3 each, as felt by a typical viewer).
    - *Semantic space*: a 2-D PCA of Gemini text embeddings of the package, across all analysed clips.
-4. **DSM-5 theme scores**: A1–A9, each 0–3, plus a theme load out of 27, the clip's stance, and a quoted piece of evidence. Any A9 (death/suicide) score shows the safety-path banner.
+4. **DSM-5 theme scores**: A1–A9, each 0–3, plus a theme load out of 27, the clip's stance, and a quoted piece of evidence.
 
 These scores describe the **content's themes**, not any person. They are not a diagnosis.
 
@@ -60,10 +60,12 @@ A pure core inside a shell of swappable parts (see `rules/`).
 | `scrollsense/domain.py` | Pure values: `VideoId`, `ClipAnalysis`, `Stage`, `semantic_points()` (PCA) |
 | `scrollsense/prompts.py` | Prompt text for both stages |
 | `scrollsense/views.py`, `feed.py` | Pure core for the phone prototype: `ViewerId`, `ViewEvent`, `dedupe`; `composition()`, `readout()` |
-| `scrollsense/drift/` | Drift from a viewer's normal feed: pure core (`core.py`) and the tuning CLI (`cli.py`) |
-| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog`, `BaselineStore` |
+| `scrollsense/drift/` | Drift against research norms: pure core (`core.py`, `affect.py`, `clinical.py`, `observe.py`, `levels.py`) and the tuning CLI (`cli.py`) |
+| `scrollsense/affect_norms.py`, `reference/affect_norms.json` | Loads the global affect baseline (word norms, built by `scripts/build_affect_norms.py`) |
+| `scrollsense/nudge.py`, `nudgelog.py`, `nudge_api.py` | Patient nudge: pure policy and cards; JSONL log; desk and routes |
+| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog`, `NudgeLog`, `Nudger` |
 | `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations |
-| `scrollsense/store.py`, `viewlog.py`, `baselines.py` | `JsonFileStore`, `JsonlViewLog`, `JsonBaselineStore` |
+| `scrollsense/store.py`, `viewlog.py` | `JsonFileStore`, `JsonlViewLog` |
 | `scrollsense/analysis_queue.py`, `intake.py` | `AnalysisQueue` (paced workers, dedupe by video), `ViewIntake` (record a batch) |
 | `scrollsense/service.py` | `AnalysisService`: describe, then score, then embed, then store |
 | `scrollsense/jobs.py` | `JobBoard`: runs background threads and tracks their status |
@@ -118,34 +120,66 @@ curl -s -X POST http://127.0.0.1:8765/api/views \
 
 ## Drift detection
 
-For each viewer, ScrollSense learns where their scrolled Shorts usually sit (their *normal feed*) and flags a drift away from it. **It describes the content shown, not a diagnosis.**
+For each viewer, ScrollSense compares their most recent analysed Shorts with two global, research-based yardsticks. There is no personal baseline and no learning phase beyond a half-full window, so a feed that is heavy from the very first Short is flagged too. **It describes the content shown, not the person, and is not a diagnosis.** Sources, numbers, deviations and evaluation: `docs/clinical-calibration.md`.
 
-- **Space:** per analysed Short (first view only, in seen order): valence (1–5), arousal (1–5), negative affect (0–3), theme load (0–27), and dwelling stance (0/1). The risky direction is down for valence (weight 1) and arousal (0.5), and up for the rest (1 each).
-- **Baseline:** by default the viewer's first `SCROLLSENSE_BASELINE_N` analysed Shorts. *Set baseline now* freezes the most recent N analysed Shorts instead. They are stored by video id in `views/<viewer>.baseline.json`, so analyses that finish later can't shift the baseline. *Reset baseline* goes back to the default.
-- **Score:** take the last `SCROLLSENSE_DRIFT_WINDOW` analysed Shorts after the baseline. For each feature, compute (recent mean − baseline mean) / max(baseline SD, floor), counting only moves in the risky direction, then take the weighted mean. Levels: `learning` until the baseline is full and the window is half full, then `normal`, `watch`, or `warning`. Any A9 Short in the last window is always reported, whatever the level.
-- **Code:** pure core in `scrollsense/drift/core.py` (`DriftDetector.report` returns the `DriftReport` that the UI, and later the nudge and clinician views, consume). Adapters: `baselines.py` and `drift_api.py`.
+- **Window:** the last `SCROLLSENSE_DRIFT_WINDOW` (default 10 for a quick demo; 14 would match one Short per PHQ-9 day) analysed Shorts, first view only, in seen order. Levels stay `learning` until it holds half of that.
+- **Affect vs word norms:** the window's mean valence and arousal (1–5) against a global centre from Warriner, Kuperman & Brysbaert (2013) word norms mapped 1–9 → 1–5 (valence 3.03 ± 0.64, arousal 2.61 ± 0.45; NRC VAD 2018 as a cross-check). Effect per axis = (recent mean − norm centre) / research SD. The drift is the vector of both effects: within 1 SD is the normal range by definition, and a **deviation (`warning`)** is a drift pointing into the bottom-left quadrant (valence and arousal both at or below the norm) that is longer than 1 SD. Affect score = that length, 0 in any other direction. On the Affect map the dashed ellipse is that 1 SD edge.
+- **Clinical, PHQ-9 style (content exposure):** a DSM-5 criterion is *present* in a Short when its theme score is ≥ 2 (central). Its share of the window maps onto the PHQ-9 answers: < 2/14 "not at all" (0), up to half "several days" (1), more than half "more than half the days" (2), ≥ 12/14 "nearly every day" (3). The nine item scores sum to 0–27 and are banded by Kroenke et al. (2001): minimal < 5, mild 5–9, moderate 10–14, moderately severe 15–19, severe ≥ 20. Pattern by the PHQ-9 algorithm: "major" (≥ 5 items at "more than half the days", one of them depressed mood or anhedonia), "other" (2–4 such items), else "none". Level: `warning` at ≥ 10 (the validated cutoff) or "major"; `watch` at ≥ 5 or "other". These cutoffs come from the research and are not tuned.
+- **Overall level:** the more severe of the two. `timeline` holds the level (plus affect score and PHQ-9-style total) of the window ending at every analysed Short; the nudge policy reads it.
+- **No crisis/suicide alerts:** the feed signal is not reliable enough for that kind of alert; A9 counts in the PHQ-9-style total like every other item and triggers nothing on its own.
+- **Personal baseline removed:** the old per-viewer baseline (first N Shorts or *Set baseline now*), its store and its endpoints are gone. Legacy `views/<viewer>.baseline.json` files are no longer read, written or erased; delete them by hand if any exist.
+- **Code:** pure core in `scrollsense/drift/` (`DriftDetector.report` returns the `DriftReport` consumed by the UI and the nudge policy). The norms are loaded at the edge (`affect_norms.py`) and injected. Adapter: `drift_api.py`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SCROLLSENSE_BASELINE_N` | `20` | Default baseline size, and the default size for "Set baseline now" |
-| `SCROLLSENSE_MIN_BASELINE` | `8` | Fewest baseline Shorts needed to judge |
-| `SCROLLSENSE_DRIFT_WINDOW` | `10` | Recent window (judged once it holds half of this) |
-| `SCROLLSENSE_DRIFT_WATCH` | `1.2` | Score for `watch` (tuned, see `docs/drift-tuning.md`) |
-| `SCROLLSENSE_DRIFT_WARN` | `1.5` | Score for `warning` (placeholder, to be tuned) |
+| `SCROLLSENSE_DRIFT_WINDOW` | `10` | Recent window in analysed Shorts (judged once it holds half of this) |
+| `SCROLLSENSE_DRIFT_WATCH` | `1.0` | Affect `watch` above this many SDs into the bottom left (≥ 1; equal to warn means no affect watch band) |
+| `SCROLLSENSE_DRIFT_WARN` | `1.0` | Affect `warning` above this many SDs into the bottom left (≥ 1) |
+
+`SCROLLSENSE_BASELINE_N` and `SCROLLSENSE_MIN_BASELINE` are no longer read.
 
 | Method + path | Returns |
 |---|---|
-| `GET /api/viewers/{viewer}/drift` | `{viewer, level, score, note, config, baseline, recent, pending, features, reasons, evidence, safety, timeline}` |
-| `POST /api/viewers/{viewer}/baseline` `{size?}` | 204; freezes the last `size` (default `SCROLLSENSE_BASELINE_N`) analysed Shorts; 409 if fewer than the minimum are analysed |
-| `DELETE /api/viewers/{viewer}/baseline` | 204; back to the default baseline |
+| `GET /api/viewers/{viewer}/drift` | `{viewer, level, note, config, affect_baseline, recent, pending, score, affect_level, features, clinical, clinical_level, reasons, evidence, timeline}` |
 
-To tune thresholds without the UI (read-only; flags override the environment):
+`affect_baseline` is `{source, cite, centre:{valence, arousal}, sd:{valence, arousal}}`; `clinical` is `{window_n, items:[{code, label, present, share, score, frequency_label}], total, band, pattern, reference}` (null before the first analysed Short).
+
+To inspect a viewer without the UI (read-only; flags override the environment):
 
 ```bash
-uv run python -m scrollsense.drift patient-01 --window 8 --baseline-n 15 --watch 1.0 --warn 2.0
+uv run python -m scrollsense.drift patient-01 --window 10 --watch 0.3 --warn 0.5
 ```
 
-It prints the level, score, reasons, a feature table (baseline mean and SD, recent mean, effect, risk), evidence, A9 safety hits, and a text timeline. Other flags: `--min-baseline N`, `--data DIR`.
+It prints both levels, reasons, the affect table (norm centre and floored SD, recent mean, effect, risk), the nine PHQ-9-style items, evidence and a text timeline. Other flag: `--data DIR`.
+
+To rebuild the norms (lexicons are not shipped; NRC VAD is non-commercial only): `python -I scripts/build_affect_norms.py --lexicons DIR`. To re-run the evaluation: `PYTHONPATH=. uv run python scripts/tune_drift.py`.
+
+## Patient nudge
+
+**Research prototype, not a medical device.** When a viewer's feed stays at drift level `warning`, the phone shows a small optional check-in card over YouTube. Design: `docs/patient-nudge-plan.md`.
+
+- **Support card:** "How do these videos feel right now?" with three equal options side by side: I'm OK · I want to take a break · Not now. "I want to take a break" pauses the video and closes the tab, or switches to a blank page when the browser won't let a page close its tab (pages can't open the browser's home page). No "refresh my feed" option: steering the feed would erase the signal. It fires when the last `SCROLLSENSE_NUDGE_STREAK` judged timeline points are all `warning`, no card is open, and the cooldown since the last support card has passed (doubled after "I'm OK"). Never names a diagnosis, a mood or the video.
+- **No crisis/suicide alerts:** the feed signal is not reliable enough for that kind of alert; A9 remains a content theme score only. The support card is the only patient-facing card.
+- **Delivery:** no polling. The `POST /api/views` receipt carries `nudge`: the viewer's open (unanswered, unexpired) card, newly issued or still pending, else `null`. The userscript (v0.7) renders it and posts the tap. Decide-and-record is one atomic command (`NudgeDesk.issue_if_due`); the policy (`NudgePolicy.decide`) is pure.
+- **Storage:** `views/<viewer>.nudges.jsonl` (nudges and answers). `DELETE /api/viewers/{viewer}` erases it too.
+- **Code:** pure core `scrollsense/nudge.py`; port `NudgeLog` (adapter `nudgelog.py`); `nudge_api.py` (desk and routes).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SCROLLSENSE_NUDGE_ENABLED` | `1` | `0` turns nudges off (e.g. no nudge consent) |
+| `SCROLLSENSE_NUDGE_STREAK` | `2` | Consecutive judged timeline points at `warning` needed |
+| `SCROLLSENSE_NUDGE_COOLDOWN_S` | `600` | Seconds after a support card before the next one |
+| `SCROLLSENSE_NUDGE_OK_FACTOR` | `2` | Cooldown multiplier after "I'm OK" |
+| `SCROLLSENSE_NUDGE_EXPIRE_S` | `900` | An unanswered card stops being shown after this |
+| `SCROLLSENSE_NUDGE_QUIET_FROM` / `_QUIET_TO` | unset | Quiet hours (local hour 0–23, may wrap midnight); off unless both are set |
+| `SCROLLSENSE_NUDGE_TZ_OFFSET_MIN` | `120` | Local time for quiet hours, minutes east of UTC |
+
+| Method + path | Returns |
+|---|---|
+| `POST /api/views` | the receipt now has `nudge`: `{id, kind: support, title, message, options: [{choice, label, action: open\|call\|message\|close, href, text}], expires_at}` or `null` |
+| `GET /api/viewers/{viewer}/nudges` | history, newest first: `[{nudge: {viewer, created_at, reason, video_id, card}, response: {nudge_id, choice, at} \| null, state: open\|answered\|expired}]` |
+| `POST /api/viewers/{viewer}/nudges/{id}/response` `{choice}` | 204; 404 unknown id, 409 already answered, 422 not one of the card's options |
+
 
 ## Notes and limits
 

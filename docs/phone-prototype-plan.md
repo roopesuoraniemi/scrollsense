@@ -74,7 +74,6 @@ uvicorn 127.0.0.1:8765 (WSL2, loopback only)
   - format and theme entropy
   - `night_share` (00:00–05:00 local)
   - dwell-weighted theme share, median dwell, completion rate
-  - safety hits (A9 ≥ 1)
 - `Readout`:
   - current vs baseline vs control
   - deltas and z-scores (need ≥ 3 baseline buckets)
@@ -128,7 +127,7 @@ Collect no channel names or usernames (data minimisation; YouTube ToS).
 |---|---|---|
 | 0–1 | First-hour blockers (§5), together | — |
 | 1–4 | `ViewEvent`, `ViewLog`, `POST /api/views`, token auth, `AnalysisQueue`; tests with `MockAnalyser` | Userscript (URL watcher, dwell, buffer, flush, consent, menu); test against `SCROLLSENSE_MOCK=1` |
-| 4–7 | Pure `composition()`, `readout()` + tests; `/composition`, `/readout`, `/feed` | Dashboard: live feed ticker, theme share over time, baseline vs now vs control, safety banner |
+| 4–7 | Pure `composition()`, `readout()` + tests; `/composition`, `/readout`, `/feed` | Dashboard: live feed ticker, theme share over time, baseline vs now vs control |
 | 7–8 | Error mapping, `/api/queue` | Takeout import script if the export has arrived |
 | 8–13 | **Sock-puppet data collection:** "Patient" and "Control" scroll neutrally for ~45 min each, then the Patient account drifts (sad, sleepless, exhausted content; searches "can't sleep"). The pipeline runs live. | Same |
 | 13–15 | Tune thresholds; evidence drill-down; erase endpoint | Phone mirroring for the stage; polish |
@@ -152,8 +151,7 @@ Collect no channel names or usernames (data minimisation; YouTube ToS).
    - the composition bars move
    - "We built no recommender. This is YouTube's own model of this person, translated."
 3. **Readout:** baseline vs drift shows sleep/fatigue share up, valence down, entropy narrowing. The control stays flat. Click a flag to see the evidence quotes.
-4. **Safety:** a pre-scored A9 clip shows the immediate safety path.
-5. **Roadmap:** the userscript is the prototype. The product path is the Data Portability API (EU/UK/CH) plus Takeout backfill.
+4. **Roadmap:** the userscript is the prototype. The product path is the Data Portability API (EU/UK/CH) plus Takeout backfill.
 
 ## 7. Risks
 
@@ -166,7 +164,7 @@ Collect no channel names or usernames (data minimisation; YouTube ToS).
 | Scoring lags the swiping | 2–3 workers; prioritise by dwell; show `pending` |
 | Team testing pollutes the sock-puppet feeds | Dedicated accounts and browser profiles |
 | Ads and live videos in the feed | Count only `/shorts/{id}` |
-| Prevention content flagged as A9 | `stance` field; human review of safety flags |
+| Prevention content flagged as A9 | `stance` field; A9 is a content theme score only, with no crisis/suicide alerts (the feed signal is not reliable enough) |
 
 ## 8. Ethics, ToS, policy
 

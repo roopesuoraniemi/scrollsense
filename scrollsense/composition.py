@@ -7,11 +7,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .analysis_queue import AnalysisQueue, Pacer
-from .baselines import JsonBaselineStore
 from .drift.core import DriftConfig
 from .gemini import GeminiAnalyser, GeminiConfig
 from .mock import MockAnalyser
-from .ports import AnalysisStore, BaselineStore, ContentAnalyser, ViewLog
+from .nudge import NudgeSettings
+from .nudgelog import JsonlNudgeLog
+from .ports import AnalysisStore, ContentAnalyser, NudgeLog, ViewLog
 from .service import AnalysisService
 from .store import JsonFileStore
 from .viewlog import JsonlViewLog
@@ -34,7 +35,7 @@ class QueueConfig:
 
 @dataclass(frozen=True)
 class DataDirs:
-    """Where analyses (`clips`) and view logs plus baseline marks (`views`) live under a data
+    """Where analyses (`clips`) and view logs plus nudge logs (`views`) live under a data
     folder. Mock mode uses `mock_`-prefixed folders."""
 
     clips: Path
@@ -61,11 +62,12 @@ class Settings:
     token: str | None
     queue: QueueConfig
     drift: DriftConfig
+    nudge: NudgeSettings
 
     @classmethod
     def from_env(cls, root: Path) -> "Settings":
         """Read `root/.env`, then the process environment. `SCROLLSENSE_DATA` moves the data
-        folder (default `root/data`). Raises ValueError on a malformed drift setting."""
+        folder (default `root/data`). Raises ValueError on a malformed drift or nudge setting."""
         load_dotenv(root / ".env")
         mock = os.getenv("SCROLLSENSE_MOCK") == "1"
         gemini = GeminiConfig(model=os.getenv("GEMINI_MODEL", "gemini-4-hydrogen"),
@@ -74,7 +76,8 @@ class Settings:
         dirs = DataDirs.under(data, mock)
         return cls(mock=mock, gemini=gemini, data_dir=dirs.clips, views_dir=dirs.views,
                    token=os.getenv("SCROLLSENSE_TOKEN") or None, queue=QueueConfig.from_env(),
-                   drift=DriftConfig.from_env(os.environ))
+                   drift=DriftConfig.from_env(os.environ),
+                   nudge=NudgeSettings.from_env(os.environ))
 
 
 @dataclass(frozen=True)
@@ -83,7 +86,7 @@ class Wiring:
     store: AnalysisStore
     views: ViewLog
     queue: AnalysisQueue
-    baselines: BaselineStore
+    nudges: NudgeLog
 
 
 def wire(settings: Settings) -> Wiring:
@@ -93,7 +96,7 @@ def wire(settings: Settings) -> Wiring:
     service = AnalysisService(__analyser(settings), store, time.time)
     queue = AnalysisQueue(service, store, Pacer.per_minute(settings.queue.rpm))
     return Wiring(service=service, store=store, views=JsonlViewLog(settings.views_dir), queue=queue,
-                  baselines=JsonBaselineStore(settings.views_dir))
+                  nudges=JsonlNudgeLog(settings.views_dir))
 
 
 def __analyser(settings: Settings) -> ContentAnalyser:

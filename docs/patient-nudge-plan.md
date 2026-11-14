@@ -1,6 +1,16 @@
 # Plan: patient nudge ("Hi, how are you doing?")
 
-Status: **plan only, not built.** Builds on the drift detector (`GET /api/viewers/{v}/drift`).
+Status: **built (demo).** Builds on the drift detector (`GET /api/viewers/{v}/drift`). Research prototype, not a medical device. See README "Patient nudge" for env vars and endpoints.
+
+> **Update:** the "1-minute breathing" and "Talk to someone" options (and the calm page and contact settings) were removed. Then "Step outside" and "Refresh my feed" were replaced too: the card now asks **"How do these videos feel right now?"** with three equal options side by side: **I'm OK · I want to take a break · Not now**. "I want to take a break" pauses the video and closes the tab, or switches to a blank page (pages can't open the browser's home page). "Refresh my feed" was dropped because steering the feed would erase the signal the drift detector reads.
+
+Deviations from this plan in the demo build:
+- The policy is `NudgePolicy(settings).decide(report, history, now)`: settings live on the instance (code-style limit of 3 parameters).
+- Breathing completion is not logged: the tap on "1-minute breathing" is recorded, and `/calm.html` sends nothing (no token in URLs). The page is at `/calm.html`, not `/calm`.
+- No per-patient preferences or Finnish wording yet; contact and texts come from `SCROLLSENSE_NUDGE_*` settings. Wording does not vary with the drift reason. No weekly cap.
+- "Step outside" shows a short message instead of a timer.
+- No crisis/suicide card (decision after the build): see "A9 and crisis alerts" below.
+- The receipt carries a phone-safe `NudgeCard` (no reason, score or video id); the full `Nudge` with `reason` is only in the history endpoint.
 
 ## Goal
 When a viewer's feed drifts away from their normal, offer the patient a small, kind, optional step at the moment they are scrolling, without alarming them and without diagnostic language. The patient's one-tap answer is also a lightweight self-report that the clinician can see.
@@ -9,7 +19,7 @@ When a viewer's feed drifts away from their normal, offer the patient a small, k
 - **Offer, never alarm.** Never say "we detected depression". Say "Hi, how are you doing today?"
 - **Autonomy.** Every nudge has "I'm OK" and "Not now". Neither choice is punished or repeated straight away.
 - **Rare.** Cooldowns and quiet hours. A nudge that comes too often trains people to swipe it away.
-- **The safety path is separate.** An A9 (death/suicide) theme doesn't get a mindfulness nudge. It gets crisis resources and a clinician alert (see "Safety" below).
+- **No crisis alerts.** The support card is the only patient-facing intervention (see "A9 and crisis alerts" below).
 - **Separate consent.** Patients opt in to nudges separately from monitoring.
 - **No engagement tricks.** No streaks or rewards. Success means the patient feels supported, not that they spend more time in the app.
 
@@ -22,7 +32,7 @@ Input: the latest `DriftReport`, the nudge history and the patient's preferences
 | Sustained | at least 2 consecutive windows at warning (demo) / 20 min (product) |
 | Cooldown after any nudge | 10 min (demo) / 24 h (product) |
 | After "I'm OK" | Cooldown ×2. The answer is logged as a possible false positive for tuning. |
-| Quiet hours | none (demo) / 23:00–07:00 (product). Exception: the safety path. |
+| Quiet hours | none (demo) / 23:00–07:00 (product) |
 | Max per week | n/a (demo) / 3 (product) |
 
 All values come from env vars, like the drift thresholds (`SCROLLSENSE_NUDGE_*`).
@@ -43,10 +53,8 @@ Design notes:
 - "Talk to someone" uses a contact the patient chose at onboarding (a friend, a peer, or the clinic). The demo uses a placeholder number.
 - The breathing page is static: `GET /calm`, a 60-second paced animation (4 s in, 6 s out). It logs completion.
 
-## Safety path (A9 ≥ 1 on a recent Short)
-- This is **not a nudge.** The card shows crisis resources at once: a "You're not alone" message, the MIELI Crisis Helpline in Finland (09 2525 0111; check the number before the demo), and 112. A clinician alert opens immediately, with no quiet hours or cooldown.
-- The card never mentions the video content.
-- A9 scores need human review, because prevention and educational content also scores A9 > 0. In tuning, "Nine Symptoms of a Depressive Episode" got A9 = 1. Proposal: show the crisis card only for A9 with stance `dwelling_or_romanticising`; other A9 hits go to the clinician as "review", with no patient-facing card. The clinician view shows the evidence quote.
+## A9 and crisis alerts
+Decision: no crisis or suicide alerts, for the patient or the clinician. The earlier plan had a separate crisis card and clinician alert for A9 (death/suicide) themes; it was removed because the feed signal is not reliable enough for that kind of alert. Prevention and educational content also scores A9 > 0 (in tuning, "Nine Symptoms of a Depressive Episode" got A9 = 1). A9 remains one of the nine content theme scores and counts in the theme load like A1–A8.
 
 ## How it reaches the phone (demo vs product)
 
@@ -60,7 +68,7 @@ Design notes:
 **Demo mechanics, with no new polling:** the response to `POST /api/views` already goes to the phone every 5 s. Add an optional `nudge` field to it. When it's present, the userscript renders the card. Taps go to `POST /api/viewers/{v}/nudges/{id}/response`.
 
 ## Backend (sketch, following the existing ports-and-adapters layout)
-- Pure: `Nudge` (id, viewer, kind `support|safety`, reason, options, created_at), `NudgeResponse` (nudge_id, choice, at), `NudgePolicy.decide(report, history, prefs, now) -> Nudge | None`.
+- Pure: `Nudge` (id, viewer, kind `support`, reason, options, created_at), `NudgeResponse` (nudge_id, choice, at), `NudgePolicy.decide(report, history, prefs, now) -> Nudge | None`.
 - Port `NudgeLog`: `record(nudge)` and `respond(response)` are commands; `history(viewer)` is a query. Adapter: JSONL under the views dir.
 - `ViewIntake.record` → after appending the events, `NudgeService.pending(viewer)` decides and records a new nudge or returns the open one. The `Receipt` gains `nudge: Nudge | None`.
   - Command–query separation: decide-and-record is one atomic command, named `issue_if_due`.
@@ -75,7 +83,6 @@ Design notes:
 2. On the next send, about 5 s later, the phone shows "Hi, how are you doing today?" over the Short.
 3. Tap "1-minute breathing" and show the calm page for a few seconds.
 4. The laptop shows the response and a timestamp under the warning.
-5. Optional: a pre-scored A9 Short shows the safety card instead, to explain that path.
 
 ## Effort: about 4–6 h
 `NudgePolicy` and tests (1.5 h) · `NudgeLog` and endpoints (1 h) · receipt field and userscript card (1.5 h) · `/calm` page (0.5 h) · laptop UI line (0.5 h) · wording review (0.5 h).

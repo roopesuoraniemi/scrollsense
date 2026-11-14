@@ -49,20 +49,19 @@ svg text{font:11px system-ui,sans-serif;fill:var(--mut)}
 .row{display:grid;grid-template-columns:34px minmax(0,1fr) 120px 22px;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}.row .code{font-size:12px;color:var(--mut)}
 .bar{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}.bar i{height:10px;border-radius:3px;background:var(--seg)}
-.bar i.f{background:var(--acc)}.row.a9 .bar i.f{background:var(--danger)}
+.bar i.f{background:var(--acc)}
 .total{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}.total b{font-size:28px;font-weight:600}
-.safety{background:var(--danger-bg);color:var(--danger);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:10px}
+.banner{background:var(--danger-bg);color:var(--danger);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:10px}
 .mockbanner{background:#FAEEDA;color:#854F0B}
-header .tools{margin-left:auto;display:flex;gap:6px}header .tools button{font-size:13px;padding:5px 11px}
 button:disabled{opacity:.45;cursor:default}
 #drift{padding:0 20px}#drift:empty{display:none}
+#nudges{padding:6px 20px 0;font-size:13px;color:var(--mut)}#nudges:empty{display:none}#nudges b{color:var(--ink);font-weight:600}
 .drift{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-radius:10px;padding:9px 14px;margin-top:12px;font-size:13px;border:1px solid var(--line)}
 .drift.quiet{color:var(--mut);background:transparent}
 .drift.watch{background:var(--amber-bg);color:var(--amber);border-color:transparent}
 .drift.warning{background:var(--danger-bg);color:var(--danger);border-color:transparent}
 .drift .what{flex:1;min-width:240px}.drift .what b{font-weight:600}
 .drift .why{margin:3px 0 0}.drift .chips button{font-size:12px;padding:2px 9px;border-radius:6px;color:inherit;border-color:currentColor;background:transparent;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.drift.safetyline{background:var(--danger-bg);color:var(--danger);border-color:transparent}
 .spark{flex:none}.spark text{font-size:9px}
 blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);background:var(--bg);border-radius:0 8px 8px 0;font-size:14px}
 </style>
@@ -71,12 +70,9 @@ blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);bac
 <header>
   <h1>ScrollSense</h1><span class="badge" id="mode">…</span>
   <span style="font-size:13px;color:var(--mut)">Live: the Shorts scrolled on the phone → text package → embedded space → DSM-5 themes. Not a diagnostic tool.</span>
-  <span class="tools">
-    <button id="markBase" type="button" title="Use this person's most recent analysed Shorts as their normal feed">Set baseline now</button>
-    <button id="resetBase" type="button" title="Go back to the default baseline: this person's first analysed Shorts" disabled>Reset baseline</button>
-  </span>
 </header>
-<div id="drift" role="status" aria-live="polite" aria-label="Drift from this person's normal feed"></div>
+<div id="drift" role="status" aria-live="polite" aria-label="Drift against research norms"></div>
+<div id="nudges" aria-label="Nudges shown to this person"></div>
 <form id="f" onsubmit="return false">
   <label style="font-size:13px;color:var(--mut)">Viewer <select id="viewer" aria-label="Viewer"></select></label>
   <label style="font-size:13px;color:var(--mut)"><input type="checkbox" id="follow" checked> Follow live</label>
@@ -92,7 +88,7 @@ blockquote{margin:10px 0 0;padding:8px 12px;border-left:3px solid var(--acc);bac
   </section>
   <section id="col3">
     <div class="card"><h2><span class="step">3</span>Point in embedded space</h2>
-      <div class="toggle"><button id="tAff" class="on" type="button">Affect space</button><button id="tSem" type="button">Semantic space</button></div>
+      <div class="toggle"><button id="tAff" class="on" type="button">Affect</button><button id="tCon" type="button">Content similarity</button><button id="tSym" type="button">Symptoms</button></div>
       <svg id="map" viewBox="0 0 360 330" width="100%" role="img" aria-label="Map of analysed clips"></svg>
       <p class="note" id="mapnote"></p>
     </div>

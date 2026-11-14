@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Sequence
 
 from .domain import AnalyserLabel, ClipAnalysis, Stage, VideoId
-from .drift.core import BaselineMark
+from .nudge import Nudge, NudgeCard, NudgeHistory, NudgeResponse
 from .schemas import ClipScores, TextPackage
 from .views import ViewerId, ViewEvent, Window
 
@@ -70,17 +70,35 @@ class ViewLog(ABC):
         """Delete everything logged for `viewer` (GDPR erasure). Unknown viewers are a no-op."""
 
 
-class BaselineStore(ABC):
-    """Hand-set drift baselines, at most one per viewer. Without one, the default applies."""
+class NudgeLog(ABC):
+    """Append-only record of the nudges issued to each viewer and their responses.
+    Validating a response (known id, not yet answered) is the caller's job."""
 
     @abstractmethod
-    def mark(self, viewer: ViewerId, mark: BaselineMark) -> None:
-        """Store `mark` for `viewer`, replacing any earlier one."""
+    def record(self, nudge: Nudge) -> None:
+        """Record `nudge` as issued to `nudge.viewer`."""
 
     @abstractmethod
-    def mark_of(self, viewer: ViewerId) -> BaselineMark | None:
-        """`viewer`'s stored mark, or None."""
+    def respond(self, viewer: ViewerId, response: NudgeResponse) -> None:
+        """Record `viewer`'s `response` to one of their nudges."""
 
     @abstractmethod
-    def clear(self, viewer: ViewerId) -> None:
-        """Forget `viewer`'s mark, so the default baseline applies again. Idempotent."""
+    def history(self, viewer: ViewerId) -> NudgeHistory:
+        """`viewer`'s nudges in issue order, each joined with its first response."""
+
+    @abstractmethod
+    def erase(self, viewer: ViewerId) -> None:
+        """Delete everything recorded for `viewer` (GDPR erasure). Unknown viewers are a no-op."""
+
+
+class Nudger(ABC):
+    """Offers nudges to viewers as their batches arrive."""
+
+    @abstractmethod
+    def issue_if_due(self, viewer: ViewerId) -> NudgeCard | None:
+        """Atomically issue and record a nudge if the policy says one is due now, then return
+        `viewer`'s open (unanswered, unexpired) card, new or pending, or None."""
+
+    @abstractmethod
+    def erase(self, viewer: ViewerId) -> None:
+        """Delete `viewer`'s nudges and responses (GDPR erasure). Idempotent."""

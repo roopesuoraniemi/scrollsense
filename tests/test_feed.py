@@ -88,17 +88,16 @@ def test_format_entropy_is_zero_for_one_format_and_one_when_uniform() -> None:
 def test_empty_window_is_all_none() -> None:
     result = composition([], {}, EVER)
     assert (result.n_shown, result.n_scored, result.night_share, result.median_dwell_s) == (0, 0, None, None)
-    assert result.format_entropy is None and result.safety_hits == ()
+    assert result.format_entropy is None
 
 
-def test_median_dwell_and_safety_hits() -> None:
+def test_median_dwell() -> None:
     a9 = analysis("aaaaaaaaaaa", scores(themes={"a9_death_suicide": 1}))
     events = [dwelled("aaaaaaaaaaa", 5.0, 2.0), dwelled("bbbbbbbbbbb", 6.0, 8.0),
               dwelled("ccccccccccc", 7.0, 4.0), view("ddddddddddd", 8.0)]
     result = composition(events, {"aaaaaaaaaaa": a9}, EVER)
     assert result.median_dwell_s == 4.0
-    assert [(h.video_id, h.seen_at, h.evidence) for h in result.safety_hits] == [
-        ("aaaaaaaaaaa", 5.0, "evidence")]
+    assert "safety_hits" not in result.model_dump()
 
 
 def mix(n_sad: int, n_neutral: int, night: bool = False) -> Composition:

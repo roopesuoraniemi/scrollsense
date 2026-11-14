@@ -1,6 +1,7 @@
 import pytest
 
-from scrollsense.domain import ClipAnalysis, Embedding, VideoId, semantic_points
+from scrollsense.api import ClipSummary
+from scrollsense.domain import ClipAnalysis, ContentAxis, Embedding, VideoId
 from scrollsense.schemas import CRITERIA, ClipScores
 
 from .fakes import instant_mock
@@ -69,18 +70,29 @@ def analysis(video_id: str, vector: tuple[float, ...] | None) -> ClipAnalysis:
                         scores=mock.score(package), embedding=Embedding(vector=vector))
 
 
-def test_semantic_points_skips_missing_embeddings() -> None:
-    points = semantic_points([analysis("aaaaaaaaaaa", None), analysis("bbbbbbbbbbb", (1.0, 2.0))])
-    assert list(points) == ["bbbbbbbbbbb"]
+# A 2-d toy axis: light Shorts point along (1, 0), heavy ones along (0, 1).
+AXIS = ContentAxis(embed_model="mock", x=(-0.7071, 0.7071), x_light=-0.7071, x_heavy=0.7071,
+                   y=(0.7071, 0.7071), y_mean=0.7071, y_sd=0.5)
 
 
-def test_semantic_points_scaled_to_unit_box() -> None:
-    vectors = [(0.0, 0.0, 1.0), (4.0, 1.0, 0.0), (1.0, 3.0, 2.0)]
-    points = semantic_points([analysis(c * 11, v) for c, v in zip("abc", vectors)])
-    assert len(points) == 3
-    assert all(-1 <= p.x <= 1 and -1 <= p.y <= 1 for p in points.values())
+def test_content_axis_maps_the_light_and_heavy_centroids_to_0_and_1() -> None:
+    light, heavy = AXIS.project(analysis("a" * 11, (2.0, 0.0))), AXIS.project(analysis("b" * 11, (0.0, 3.0)))
+    assert light is not None and heavy is not None
+    assert (light.x, heavy.x) == pytest.approx((0.0, 1.0), abs=1e-3)
+    assert light.y == pytest.approx(0.0, abs=1e-3)
 
 
-def test_semantic_points_two_clips_pads_second_axis() -> None:
-    points = semantic_points([analysis("a" * 11, (0.0, 1.0)), analysis("b" * 11, (1.0, 0.0))])
-    assert {p.y for p in points.values()} == {0.0}
+@pytest.mark.parametrize("vector", [None, (), (1.0, 0.0, 0.0)])
+def test_content_axis_needs_a_vector_of_the_right_size(vector: tuple[float, ...] | None) -> None:
+    assert AXIS.project(analysis("a" * 11, vector)) is None
+
+
+def test_content_axis_ignores_embeddings_from_another_model() -> None:
+    assert AXIS.model_copy(update={"embed_model": "gemini-embedding-2"}).project(analysis("a" * 11, (1.0, 0.0))) is None
+
+
+def test_summary_places_clip_in_symptom_space() -> None:
+    clip = analysis("a" * 11, None)
+    s = clip.scores
+    point = ClipSummary.of(clip, None).symptoms
+    assert (point.x, point.y) == (s.a1_depressed_mood + s.a2_anhedonia, s.a4_sleep + s.a6_fatigue)

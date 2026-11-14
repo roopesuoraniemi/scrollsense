@@ -10,7 +10,6 @@ Give the TMS clinic's psychiatrist or nurse one screen that answers **"who needs
 |---|---|---|
 | Nurse coordinator | Morning triage | List of patients sorted by concern; acknowledge what's handled |
 | Psychiatrist | Before a call or a maintenance-TMS decision | One patient's trajectory since TMS ended, what changed and when, the evidence |
-| On-call | Safety alert | Immediate notification with context and the patient's contact info |
 
 ## Screens
 
@@ -23,7 +22,7 @@ Give the TMS clinic's psychiatrist or nurse one screen that answers **"who needs
 | ⚫ Stale | patient-05 | 4 d | No activity for 4 days | 4 d ago | – | Check in |
 | 🟢 Normal | … | | | | | |
 
-- **Sort order:** safety, then warning, watch, stale, learning, normal.
+- **Sort order:** warning, watch, stale, learning, normal.
 - **Stale counts as a status.** A patient who stops scrolling may have changed phone, or may be withdrawing. The dashboard says "no data", never "fine".
 
 ### 2. Patient detail (`/clinic/patients/{v}`)
@@ -37,15 +36,16 @@ Give the TMS clinic's psychiatrist or nurse one screen that answers **"who needs
 - **Disclaimer on every page:** "Engagement patterns from the patient's feed. Not a diagnosis. Confirm in conversation."
 
 ### 3. Alert inbox
-Open alerts with acknowledge, snooze (24 h) and escalate. Safety alerts stay pinned until acknowledged.
+Open alerts with acknowledge, snooze (24 h) and escalate.
 
 ## Alert rules (pure `AlertPolicy`, config from env like the drift thresholds)
 | Alert | Opens when | Closes when |
 |---|---|---|
 | `drift` | Level `warning` for ≥ 2 consecutive daily windows (product), or ≥ 2 rolling windows (demo) | Acknowledged, or back to `normal` for 3 days |
-| `safety` | Any recent Short with A9 ≥ 1. **Grade it by stance:** `dwelling_or_romanticising` = urgent; `neutral_or_informational` / `coping_or_recovery` = "review". In tuning, a psychoeducation clip ("Nine Symptoms of a Depressive Episode") scored A9 = 1 because it lists suicidal thoughts as a symptom. | Acknowledged (never auto-closes) |
 | `stale` | No view events for 72 h | A new event, or acknowledged |
 | `nudge_declined` (info) | 3 nudges in a row answered "Not now" | Acknowledged |
+
+**No crisis/suicide alerts.** An earlier draft had an alert for any recent Short with an A9 (death/suicide) theme. It was dropped because the feed signal is not reliable enough for that kind of alert: prevention and educational content also scores A9 > 0 (a psychoeducation clip, "Nine Symptoms of a Depressive Episode", scored A9 = 1). A9 remains a content theme score only.
 
 ## Backend (sketch)
 - **Daily aggregation:** a `DailySummary` per viewer per day (composition from `feed.py` plus the drift score of that day vs baseline), computed by a scheduled job or on read with a cache. Multi-week timelines then don't rescan raw events.
@@ -59,7 +59,7 @@ Open alerts with acknowledge, snooze (24 h) and escalate. Safety alerts stay pin
   - `GET /patients/{v}`: detail bundle (header, daily timeline, current drift report, clusters, evidence, nudges, alerts, actions)
   - `POST /alerts/{id}/ack` `{note}` · `POST /alerts/{id}/snooze` · `POST /patients/{v}/actions`
 - **Auth and roles:** the demo uses two tokens (a device token for `/api/views`, a clinician token for `/api/clinic/*`). The product uses hospital SSO, per-patient access lists, an audit log of every view, and a session timeout.
-- **Notifications:** safety alerts go out by email or SMS to on-call in the product. The demo uses a red banner and a sound on the dashboard.
+- **Notifications:** alerts appear in the dashboard's alert inbox; there are no crisis alerts (see "Alert rules").
 
 ## Privacy and governance
 - **Minimum necessary:** clinicians see aggregates and the few evidence clips (public videos), not the full scroll history by default. A "Show full feed" toggle needs a reason and is logged.

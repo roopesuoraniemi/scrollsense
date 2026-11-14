@@ -1,8 +1,10 @@
 """Test doubles for the pipeline seams."""
 from scrollsense.domain import AnalyserLabel, ClipAnalysis, VideoId
 from scrollsense.mock import MockAnalyser
-from scrollsense.ports import AnalysisStore
+from scrollsense.nudge import NudgeCard
+from scrollsense.ports import AnalysisStore, Nudger
 from scrollsense.schemas import TextPackage
+from scrollsense.views import ViewerId
 
 
 class MemoryStore(AnalysisStore):
@@ -39,3 +41,11 @@ class FailingDescribeAnalyser(MockAnalyser):
 
 def no_wait(seconds: float) -> None:
     """A Pacer sleep that returns at once."""
+
+
+class NoNudges(Nudger):
+    def issue_if_due(self, viewer: ViewerId) -> NudgeCard | None:
+        return None
+
+    def erase(self, viewer: ViewerId) -> None:
+        pass

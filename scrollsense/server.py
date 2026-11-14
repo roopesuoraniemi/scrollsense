@@ -9,13 +9,17 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.params import Depends as Dependency
 from fastapi.staticfiles import StaticFiles
 
-from .api import Api
+from .api import Api, ClipCatalog
+from .affect_norms import load_affect_norms
+from .content_axis import load_content_axis
 from .auth import BearerToken
 from .composition import ROOT, Settings, Wiring, wire
 from .drift.core import DriftDetector
 from .drift_api import DriftApi, FeedObserver, ViewerDrift
-from .intake import ViewIntake
+from .intake import ViewerExtras, ViewIntake
 from .jobs import JobBoard
+from .nudge import NudgePolicy
+from .nudge_api import NudgeApi, NudgeDesk, NudgeJudge
 from .views_api import ViewerReports, ViewsApi
 
 
@@ -33,12 +37,14 @@ def create_app(settings: Settings) -> FastAPI:
 
 
 def __routers(wiring: Wiring, settings: Settings) -> list[APIRouter]:
-    views = ViewsApi(ViewIntake(wiring.views, wiring.queue, wiring.baselines),
-                     ViewerReports(wiring.views, wiring.store, wiring.queue), time.time)
     observer = FeedObserver(wiring.views, wiring.store)
-    drift = ViewerDrift(observer, wiring.baselines, DriftDetector(settings.drift))
-    return [Api(wiring.service, wiring.store, JobBoard(wiring.service)).router(),
-            views.router(), DriftApi(drift, time.time).router()]
+    drift = ViewerDrift(observer, DriftDetector(settings.drift, load_affect_norms().baseline))
+    desk = NudgeDesk(wiring.nudges, NudgeJudge(drift, NudgePolicy(settings.nudge)), time.time)
+    views = ViewsApi(ViewIntake(wiring.views, wiring.queue, ViewerExtras(desk)),
+                     ViewerReports(wiring.views, wiring.store, wiring.queue), time.time)
+    return [Api(wiring.service, ClipCatalog(wiring.store, load_content_axis()), JobBoard(wiring.service)).router(),
+            views.router(), DriftApi(drift).router(),
+            NudgeApi(desk).router()]
 
 
 def __guard(token: str | None) -> list[Dependency]:

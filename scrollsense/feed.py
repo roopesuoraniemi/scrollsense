@@ -29,14 +29,6 @@ FORMAT_ENTROPY_DROP = -0.15
 TOLERANCE = 1e-9
 
 
-class SafetyHit(Frozen):
-    """A shown clip with any A9 (death/suicide) theme: route to a human, never to a score."""
-
-    video_id: str
-    seen_at: float
-    evidence: str
-
-
 class Composition(Frozen):
     """What one viewer was shown in one window. Shares are 0-1 and None when undefined
     (nothing shown, or nothing scored yet).
@@ -55,7 +47,6 @@ class Composition(Frozen):
     format_entropy: float | None
     night_share: float | None
     median_dwell_s: float | None
-    safety_hits: tuple[SafetyHit, ...]
 
     @property
     def metrics(self) -> dict[str, float | None]:
@@ -82,13 +73,6 @@ class Exposure:
     def is_negative(self) -> bool:
         return self.analysis.scores.valence <= NEGATIVE_VALENCE_MAX
 
-    @property
-    def safety_hit(self) -> SafetyHit | None:
-        if self.analysis.scores.a9_death_suicide < 1:
-            return None
-        return SafetyHit(video_id=self.event.video_id, seen_at=self.event.seen_at,
-                         evidence=self.analysis.scores.evidence)
-
 
 def composition(events: Sequence[ViewEvent], analyses: Mapping[str, ClipAnalysis],
                 window: Window) -> Composition:
@@ -107,8 +91,7 @@ def composition(events: Sequence[ViewEvent], analyses: Mapping[str, ClipAnalysis
         hopeful_share=__share([x.analysis.scores.hopeful for x in scored]),
         format_entropy=__entropy(Counter(x.analysis.package.format for x in scored)),
         night_share=__share([e.local_hour < NIGHT_END_HOUR for e in shown]),
-        median_dwell_s=__median([e.dwell_s for e in shown if e.dwell_s is not None]),
-        safety_hits=tuple(hit for x in scored if (hit := x.safety_hit) is not None))
+        median_dwell_s=__median([e.dwell_s for e in shown if e.dwell_s is not None]))
 
 
 def __share(flags: Sequence[bool]) -> float | None:
@@ -213,7 +196,6 @@ class Readout(Frozen):
     control_deltas: dict[str, float | None] | None
     flags: tuple[str, ...]
     clusters: tuple[ClusterStatus, ...]
-    safety_hits: tuple[SafetyHit, ...]
 
 
 def readout(current: Composition, baseline: Composition, control: Shift | None) -> Readout:
@@ -223,5 +205,4 @@ def readout(current: Composition, baseline: Composition, control: Shift | None) 
     control_deltas = control.deltas if control is not None else None
     flags = tuple(rule.metric for rule in RULES if rule.flags(deltas, control_deltas))
     return Readout(deltas=deltas, control_deltas=control_deltas, flags=flags,
-                   clusters=tuple(cluster.status(flags) for cluster in CLUSTERS),
-                   safety_hits=current.safety_hits)
+                   clusters=tuple(cluster.status(flags) for cluster in CLUSTERS))

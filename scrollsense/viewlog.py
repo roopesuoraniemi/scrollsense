@@ -36,7 +36,9 @@ class JsonlViewLog(ViewLog):
 
     def viewers(self) -> tuple[ViewerId, ...]:
         with self.__lock:
-            return tuple(ViewerId(p.stem) for p in sorted(self.__directory.glob("*.jsonl")))
+            paths = sorted(self.__directory.glob("*.jsonl"))
+        # Other per-viewer files (`<viewer>.nudges.jsonl`) share the folder; pseudonyms have no dots.
+        return tuple(ViewerId(p.stem) for p in paths if "." not in p.stem)
 
     def erase(self, viewer: ViewerId) -> None:
         with self.__lock:

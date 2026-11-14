@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from scrollsense.api import Api
+from scrollsense.api import Api, ClipCatalog
 from scrollsense.jobs import JobBoard
 from scrollsense.service import AnalysisService
 from scrollsense.store import JsonFileStore
@@ -18,7 +18,7 @@ def client(tmp_path: Path) -> TestClient:
     store = JsonFileStore(tmp_path)
     service = AnalysisService(instant_mock(), store, time.time)
     app = FastAPI()
-    app.include_router(Api(service, store, JobBoard(service)).router())
+    app.include_router(Api(service, ClipCatalog(store, None), JobBoard(service)).router())
     return TestClient(app)
 
 

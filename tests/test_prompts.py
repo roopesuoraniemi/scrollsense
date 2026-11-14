@@ -1,6 +1,6 @@
 from scrollsense.domain import VideoId
 from scrollsense.prompts import DESCRIBE_PROMPT, package_text, scoring_prompt
-from scrollsense.schemas import SAFETY_CRITERION, ClipScores, TextPackage
+from scrollsense.schemas import A9_CRITERION, ClipScores, TextPackage
 
 from .fakes import instant_mock
 
@@ -22,7 +22,7 @@ def test_scoring_prompt_has_package_examples_and_euphemisms() -> None:
 
 
 def test_a9_theme_lists_euphemisms() -> None:
-    assert "unalive" in SAFETY_CRITERION.theme and "disappear forever" in SAFETY_CRITERION.theme
+    assert "unalive" in A9_CRITERION.theme and "disappear forever" in A9_CRITERION.theme
 
 
 def test_describe_prompt_allows_names_but_not_inferred_feelings() -> None:
