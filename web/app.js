@@ -11,7 +11,7 @@ const WHEEL_LOCK_MS = 650;
 const state = {
   meta: null, viewer: null, script: [], playlist: [], at: -1, feed: [], clips: [], drift: null,
   current: null, signature: '', card: null, answered: new Set(), onBreak: false,
-  muted: true, paused: false, lastPost: 0, wheelUntil: 0, pointer: null, firstShown: new Map(),
+  muted: true, paused: false, lastPost: 0, wheelUntil: 0, pointer: null,
 };
 
 function esc(text) {
@@ -74,7 +74,7 @@ async function init() {
   state.playlist = [...state.script];
   show(0);
   setInterval(() => tick().catch((error) => setStatus(error.message, true)), POLL_MS);
-  setInterval(() => { heartbeat(); renderWaiting(); }, 1000);
+  setInterval(heartbeat, 1000);
 }
 
 function renderMode() {
@@ -90,8 +90,6 @@ function show(index) {
   if (index < 0 || index >= state.playlist.length || state.card || state.onBreak) return;
   state.at = index;
   state.paused = false;
-  const { id } = state.playlist[index];
-  if (!state.firstShown.has(id)) state.firstShown.set(id, Date.now());
   renderPlayer();
   renderPhoneChrome();
   postViews([viewEvent(state.playlist[index].id)]);
@@ -214,7 +212,6 @@ async function reset() {
   await api(`/api/viewers/${state.viewer}`, { method: 'DELETE' }).catch((error) => setStatus(error.message, true));
   Object.assign(state, { playlist: [...state.script], feed: [], clips: [], drift: null, current: null, signature: '', card: null, onBreak: false });
   state.answered.clear();
-  state.firstShown.clear();
   resetArrow();
   $('overlay').innerHTML = '';
   addMessage('');
@@ -280,16 +277,14 @@ async function refreshCurrent() {
   renderWaiting();
 }
 
+// Until this viewer's analysis of the Short is done, the text panel says so; the phone stays clean.
 function renderWaiting() {
   const id = state.playlist[state.at]?.id;
-  const waiting = Boolean(id) && state.current?.id === id && !state.current.package;
-  $('analysing').classList.toggle('on', waiting);
-  if (!waiting) return;
+  if (!id || state.current?.id !== id || state.current.package) return;
   const item = state.feed.find((entry) => entry.event.video_id === id);
-  const seconds = Math.round((Date.now() - (state.firstShown.get(id) ?? Date.now())) / 1000);
-  const text = item?.state === 'failed' ? `Analysis failed: ${item.error}` : `Gemini is watching this Short... ${seconds} s`;
-  $('analysing').textContent = item?.state === 'failed' ? 'Analysis failed' : `Gemini is watching... ${seconds} s`;
-  $('pkg').innerHTML = `<div class="empty">${esc(text)}</div>`;
+  const html = item?.state === 'failed' ? `<div class="empty">${esc(`Analysis failed: ${item.error}`)}</div>`
+    : '<div class="empty analyzing" role="status">Analyzing</div>';
+  if ($('pkg').innerHTML !== html) $('pkg').innerHTML = html;
 }
 
 const LEVEL_CLASS = { learning: 'quiet', normal: 'quiet', watch: 'watch', warning: 'warning' };
