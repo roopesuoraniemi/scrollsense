@@ -122,12 +122,27 @@ Other settings: `SCROLLSENSE_WORKERS` (2), `SCROLLSENSE_RPM` (20 analyses per mi
 | `GEMINI_PIPELINE` | `one_call` | `one_call`: Gemini watches the Short at low resolution and returns a short description and the scores in one call. `two_stage`: a full text package (transcript, visuals, audio), then scoring from the text |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` (one_call), `gemini-4-hydrogen` (two_stage) | Overrides the pipeline's model |
 | `GEMINI_THINKING_OFF` | `0` | `1` turns thinking off (one_call); `gemini-3.5-flash-lite` rejects it, `gemini-3.1-flash-lite` accepts it |
+| `GEMINI_MAX_WATCH_S` | `30` | Gemini watches at most the first this many seconds of a video (`0`: all of it), so a long video never stalls the demo |
 
 Measured on 10 Shorts: `one_call` with `gemini-3.5-flash-lite` takes about 2 s (median; 2.3 s at
 most, up to about 8 s under load) and matched the stored two-stage valence on all 10;
 `gemini-3.1-flash-lite` without thinking is as fast but less perceptive; `two_stage` takes 20-30 s.
 People watch a Short for about 14-16 s on average, so `one_call` results arrive before the swipe.
 With `one_call` the page's **Details** (transcript, on-screen text, visuals, audio) stay empty.
+
+**Slower models do not score better.** On 41 Shorts covering every valence and arousal level
+(plus the 6 longest), compared with the stored two-stage `gemini-4-hydrogen` analyses:
+
+| One call, low resolution | Median | Slowest | Valence exact (MAE) | Arousal exact (MAE) | Low-mood agrees |
+|---|---|---|---|---|---|
+| `gemini-3.5-flash-lite`, 30 s cap (default) | 3.4 s | 5.7 s | 28/41 (0.39) | 18/41 (0.59) | 39/41 |
+| `gemini-3.5-flash-lite`, no cap | 2.7 s | 6.5 s | 30/41 (0.37) | 22/41 (0.46) | 37/41 |
+| `gemini-3.5-flash` | 7.7 s | 11.5 s | 28/41 (0.39) | 18/41 (0.56) | 37/41 |
+| `gemini-3.8-flash` | 8.6 s | 11.7 s | 26/41 (0.41) | 17/41 (0.59) | 36/41 |
+| `gemini-4-hydrogen` | 11.8 s | 20.5 s | 29/41 (0.29) | 21/41 (0.49) | 38/41 |
+
+Differences of a few Shorts are within run-to-run noise; hydrogen's slightly lower valence error
+is the same model as the reference. Arousal is the noisy axis for every model.
 
 ## Structure
 

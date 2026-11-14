@@ -328,7 +328,7 @@ function lowMoodQuadrant(cx, cy) {
 
 // The arrow glides from where it was drawn last to the new average (and fades to the new level's
 // colour), instead of jumping, whenever a newly analysed Short moves it.
-const ARROW_MS = 700;
+const ARROW_MS = 900;
 const arrow = { origin: null, target: null, shown: null, colour: null, shownColour: null, frame: 0 };
 
 function driftArrow(cx, cy) {
@@ -355,9 +355,10 @@ function animateArrow() {
   $('arrow-line').getBoundingClientRect();   // commit the old colour so the change transitions
   ['arrow-line', 'arrow-head'].forEach((id, i) => $(id).setAttribute(i ? 'fill' : 'stroke', arrow.colour));
   arrow.shownColour = arrow.colour;
-  const begin = performance.now();
+  let begin = null;   // the first frame's timestamp: rAF times can precede performance.now()
   const frame = (now) => {
-    const t = instant ? 1 : Math.min(1, (now - begin) / ARROW_MS);
+    begin ??= now;
+    const t = instant ? 1 : Math.min(1, Math.max(0, (now - begin) / ARROW_MS));
     const eased = 1 - (1 - t) ** 3;
     placeArrow({ x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased });
     if (t < 1) arrow.frame = requestAnimationFrame(frame);

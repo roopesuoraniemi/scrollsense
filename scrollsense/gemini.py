@@ -28,42 +28,49 @@ class GeminiConfig:
     """`pipeline` one_call: low video resolution, about 2 s per Short with gemini-3.5-flash-lite
     (as fast with gemini-3.1-flash-lite and `thinking_off`, but less perceptive). two_stage:
     full resolution, about 20-30 s with gemini-4-hydrogen. `thinking_off` applies to one_call
-    only; some models reject it (gemini-3.5-flash-lite does)."""
+    only; some models reject it (gemini-3.5-flash-lite does). Gemini watches at most the first
+    `max_watch_s` seconds of a video (None: all of it), so a long video never stalls the feed."""
 
     model: str
     pipeline: Pipeline = "one_call"
     thinking_off: bool = False
+    max_watch_s: float | None = 30.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "GeminiConfig":
         """`GEMINI_PIPELINE` one_call (default) or two_stage; `GEMINI_MODEL` overrides the
-        pipeline's default model; `GEMINI_THINKING_OFF=1` turns thinking off (one_call).
-        Raises ValueError on an unknown pipeline."""
+        pipeline's default model; `GEMINI_THINKING_OFF=1` turns thinking off (one_call);
+        `GEMINI_MAX_WATCH_S` caps the seconds watched (default 30, 0 = no cap).
+        Raises ValueError on an unknown pipeline or a negative cap."""
         pipeline = env.get("GEMINI_PIPELINE", "one_call")
         if pipeline not in DEFAULT_MODELS:
             raise ValueError(f"GEMINI_PIPELINE must be one_call or two_stage, not {pipeline!r}")
         chosen: Pipeline = "one_call" if pipeline == "one_call" else "two_stage"
+        cap = float(env.get("GEMINI_MAX_WATCH_S", "30"))
+        if cap < 0:
+            raise ValueError(f"GEMINI_MAX_WATCH_S must be 0 (no cap) or more, not {cap}")
         return cls(model=env.get("GEMINI_MODEL") or DEFAULT_MODELS[pipeline], pipeline=chosen,
-                   thinking_off=env.get("GEMINI_THINKING_OFF") == "1")
+                   thinking_off=env.get("GEMINI_THINKING_OFF") == "1", max_watch_s=cap or None)
 
 
 class GeminiCaller:
     """Structured-output calls to one model. Reads public YouTube URLs directly, so no video
     is downloaded. Needs GEMINI_API_KEY (or GOOGLE_API_KEY); raises RuntimeError without one."""
 
-    def __init__(self, model: str, fast: bool, thinking_off: bool = False) -> None:
+    def __init__(self, config: GeminiConfig) -> None:
         if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
             raise RuntimeError("GEMINI_API_KEY is not set: copy .env.example to .env, "
                                "or run with SCROLLSENSE_MOCK=1")
-        self.model = model
-        self.__fast = fast
-        self.__thinking_off = thinking_off
+        self.model = config.model
+        self.__settings = config
         self.__client = genai.Client()
 
-    @staticmethod
-    def watching(video: VideoId, prompt: str) -> types.Content:
+    def watching(self, video: VideoId, prompt: str) -> types.Content:
+        """`video` (only its first `max_watch_s` seconds, if capped) followed by `prompt`."""
+        cap = self.__settings.max_watch_s
+        clip = types.VideoMetadata(end_offset=f"{cap:g}s") if cap else None
         return types.Content(role="user", parts=[
-            types.Part(file_data=types.FileData(file_uri=video.watch_url)),
+            types.Part(file_data=types.FileData(file_uri=video.watch_url), video_metadata=clip),
             types.Part(text=prompt),
         ])
 
@@ -79,8 +86,9 @@ class GeminiCaller:
             raise GenerationBlocked(f"{_finish_reason(response)}: {error.error_count()} errors") from error
 
     def __config(self, schema: type[BaseModel]) -> types.GenerateContentConfig:
-        fast = {"media_resolution": types.MediaResolution.MEDIA_RESOLUTION_LOW} if self.__fast else {}
-        if self.__thinking_off:
+        one_call = self.__settings.pipeline == "one_call"
+        fast = {"media_resolution": types.MediaResolution.MEDIA_RESOLUTION_LOW} if one_call else {}
+        if one_call and self.__settings.thinking_off:
             fast["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         return types.GenerateContentConfig(response_mime_type="application/json",
                                            response_schema=schema, temperature=0.2, **fast)
@@ -138,8 +146,8 @@ class TwoStageAnalyser(ContentAnalyser):
 def gemini_analyser(config: GeminiConfig) -> ContentAnalyser:
     """The analyser for `config.pipeline`. Raises RuntimeError without an API key."""
     if config.pipeline == "one_call":
-        return OneCallAnalyser(GeminiCaller(config.model, fast=True, thinking_off=config.thinking_off))
-    return TwoStageAnalyser(GeminiCaller(config.model, fast=False))
+        return OneCallAnalyser(GeminiCaller(config))
+    return TwoStageAnalyser(GeminiCaller(config))
 
 
 def _finish_reason(response: types.GenerateContentResponse) -> str:

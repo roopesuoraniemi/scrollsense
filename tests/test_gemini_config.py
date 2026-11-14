@@ -7,7 +7,14 @@ from scrollsense.schemas import QuickAnalysis
 
 def test_one_call_is_the_default_with_flash_lite_thinking() -> None:
     assert GeminiConfig.from_env({}) == GeminiConfig(model="gemini-3.5-flash-lite", pipeline="one_call",
-                                                     thinking_off=False)
+                                                     thinking_off=False, max_watch_s=30.0)
+
+
+def test_watch_cap_from_env() -> None:
+    assert GeminiConfig.from_env({"GEMINI_MAX_WATCH_S": "12"}).max_watch_s == 12.0
+    assert GeminiConfig.from_env({"GEMINI_MAX_WATCH_S": "0"}).max_watch_s is None
+    with pytest.raises(ValueError):
+        GeminiConfig.from_env({"GEMINI_MAX_WATCH_S": "-1"})
 
 
 def test_thinking_can_be_turned_off() -> None:
