@@ -2,7 +2,7 @@
 from threading import Lock
 
 from .analysis_queue import AnalysisQueue
-from .ports import ViewLog
+from .ports import BaselineStore, ViewLog
 from .schemas import Frozen
 from .views import EVER, Rejection, ViewBatch, ViewerId, fresh, parse_events
 
@@ -20,9 +20,10 @@ class Receipt(Frozen):
 class ViewIntake:
     """Records client batches. Only `shorts` events are analysed; the rest are just logged."""
 
-    def __init__(self, log: ViewLog, queue: AnalysisQueue) -> None:
+    def __init__(self, log: ViewLog, queue: AnalysisQueue, baselines: BaselineStore) -> None:
         self.__log = log
         self.__queue = queue
+        self.__baselines = baselines
         self.__lock = Lock()
 
     def record(self, batch: ViewBatch) -> Receipt:
@@ -41,6 +42,8 @@ class ViewIntake:
                        queued=sum(queued), rejected=parsed.rejected)
 
     def erase(self, viewer: ViewerId) -> None:
-        """Delete `viewer`'s view log; waits for any batch being recorded."""
+        """Delete `viewer`'s view log and baseline mark (GDPR erasure); waits for any batch
+        being recorded. Shared clip analyses are kept: they describe public videos, not the viewer."""
         with self.__lock:
             self.__log.erase(viewer)
+            self.__baselines.clear(viewer)

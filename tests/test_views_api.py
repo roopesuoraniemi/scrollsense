@@ -5,6 +5,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from scrollsense.baselines import JsonBaselineStore
 from scrollsense.analysis_queue import AnalysisQueue, Pacer
 from scrollsense.auth import BearerToken
 from scrollsense.intake import ViewIntake
@@ -25,7 +26,7 @@ def app(tmp_path: Path, token: str | None) -> FastAPI:
     queue = AnalysisQueue(AnalysisService(instant_mock(), store, time.time), store,
                           Pacer(0.0, time.monotonic, no_wait))
     queue.start(2)
-    api = ViewsApi(ViewIntake(log, queue), ViewerReports(log, store, queue), lambda: NOW)
+    api = ViewsApi(ViewIntake(log, queue, JsonBaselineStore(tmp_path / "views")), ViewerReports(log, store, queue), lambda: NOW)
     built = FastAPI()
     built.include_router(api.router(), dependencies=[Depends(BearerToken(token))] if token else [])
     return built

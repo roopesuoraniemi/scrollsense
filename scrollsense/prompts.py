@@ -24,6 +24,13 @@ Meaning:
 
 Keep transcript and on-screen text verbatim where possible. Return the fields of the schema."""
 
+# Gemini stops with finish_reason RECITATION when its answer would reproduce copyrighted
+# text (typically song lyrics in music edits). The retry asks for paraphrase instead.
+PARAPHRASE_PROMPT = DESCRIBE_PROMPT.replace(
+    "Keep transcript and on-screen text verbatim where possible.",
+    "Do NOT quote anything: paraphrase speech and on-screen text in your own words, prefixed "
+    "\"Paraphrased:\". Describe any song only by its theme and mood.")
+
 # The examples are illustrative anchors written for this prompt, not real clips, pending
 # the team's own labelled calibration set. Keep them out of the stored data.
 __EXAMPLES = """1. Format: talking_to_camera. Transcript: "Depression isn't just being sad. It can be

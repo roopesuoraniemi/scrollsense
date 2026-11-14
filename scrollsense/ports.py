@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Sequence
 
 from .domain import AnalyserLabel, ClipAnalysis, Stage, VideoId
+from .drift.core import BaselineMark
 from .schemas import ClipScores, TextPackage
 from .views import ViewerId, ViewEvent, Window
 
@@ -67,3 +68,19 @@ class ViewLog(ABC):
     @abstractmethod
     def erase(self, viewer: ViewerId) -> None:
         """Delete everything logged for `viewer` (GDPR erasure). Unknown viewers are a no-op."""
+
+
+class BaselineStore(ABC):
+    """Hand-set drift baselines, at most one per viewer. Without one, the default applies."""
+
+    @abstractmethod
+    def mark(self, viewer: ViewerId, mark: BaselineMark) -> None:
+        """Store `mark` for `viewer`, replacing any earlier one."""
+
+    @abstractmethod
+    def mark_of(self, viewer: ViewerId) -> BaselineMark | None:
+        """`viewer`'s stored mark, or None."""
+
+    @abstractmethod
+    def clear(self, viewer: ViewerId) -> None:
+        """Forget `viewer`'s mark, so the default baseline applies again. Idempotent."""

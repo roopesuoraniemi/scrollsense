@@ -1,4 +1,5 @@
 """AnalysisStore on the local filesystem."""
+import threading
 from pathlib import Path
 
 from .domain import ClipAnalysis, VideoId
@@ -8,7 +9,8 @@ from .ports import AnalysisStore
 class JsonFileStore(AnalysisStore):
     """One `<video id>.json` file per analysis in `directory`, created if missing.
 
-    Not safe for two writers saving the same video at once.
+    Saves are atomic renames, so readers never see a partial file; the last of two
+    concurrent saves of one video wins.
     """
 
     def __init__(self, directory: Path) -> None:
@@ -25,7 +27,11 @@ class JsonFileStore(AnalysisStore):
         return tuple(sorted(analyses, key=lambda a: a.created))
 
     def save(self, analysis: ClipAnalysis) -> None:
-        self.__path(analysis.video_id).write_text(analysis.model_dump_json(indent=2))
+        # Write then rename, so a concurrent `load` never reads a half-written file.
+        path = self.__path(analysis.video_id)
+        staging = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+        staging.write_text(analysis.model_dump_json(indent=2))
+        staging.replace(path)
 
     def __path(self, video_id: str) -> Path:
         return self.__directory / f"{video_id}.json"

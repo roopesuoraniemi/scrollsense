@@ -60,13 +60,14 @@ A pure core inside a shell of swappable parts (see `rules/`).
 | `scrollsense/domain.py` | Pure values: `VideoId`, `ClipAnalysis`, `Stage`, `semantic_points()` (PCA) |
 | `scrollsense/prompts.py` | Prompt text for both stages |
 | `scrollsense/views.py`, `feed.py` | Pure core for the phone prototype: `ViewerId`, `ViewEvent`, `dedupe`; `composition()`, `readout()` |
-| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog` |
+| `scrollsense/drift/` | Drift from a viewer's normal feed: pure core (`core.py`) and the tuning CLI (`cli.py`) |
+| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog`, `BaselineStore` |
 | `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations |
-| `scrollsense/store.py`, `viewlog.py` | `JsonFileStore`, `JsonlViewLog` |
+| `scrollsense/store.py`, `viewlog.py`, `baselines.py` | `JsonFileStore`, `JsonlViewLog`, `JsonBaselineStore` |
 | `scrollsense/analysis_queue.py`, `intake.py` | `AnalysisQueue` (paced workers, dedupe by video), `ViewIntake` (record a batch) |
 | `scrollsense/service.py` | `AnalysisService`: describe, then score, then embed, then store |
 | `scrollsense/jobs.py` | `JobBoard`: runs background threads and tracks their status |
-| `scrollsense/api.py`, `views_api.py`, `auth.py` | HTTP endpoints under `/api`; Bearer-token guard |
+| `scrollsense/api.py`, `views_api.py`, `drift_api.py`, `auth.py` | HTTP endpoints under `/api`; Bearer-token guard |
 | `scrollsense/composition.py` | `Settings` from the environment, plus the wiring |
 | `scrollsense/server.py`, `__main__.py` | Entry points: web server and CLI |
 | `web/index.html`, `web/app.js` | The UI, with no build step |
@@ -114,6 +115,37 @@ curl -s -X POST http://127.0.0.1:8765/api/views \
 ```
 
 > **Set `SCROLLSENSE_TOKEN` before running `cloudflared tunnel --url http://127.0.0.1:8765`.** The tunnel makes the server public, and every queued Short spends Gemini credits.
+
+## Drift detection
+
+For each viewer, ScrollSense learns where their scrolled Shorts usually sit (their *normal feed*) and flags a drift away from it. **It describes the content shown, not a diagnosis.**
+
+- **Space:** per analysed Short (first view only, in seen order): valence (1–5), arousal (1–5), negative affect (0–3), theme load (0–27), and dwelling stance (0/1). The risky direction is down for valence (weight 1) and arousal (0.5), and up for the rest (1 each).
+- **Baseline:** by default the viewer's first `SCROLLSENSE_BASELINE_N` analysed Shorts. *Set baseline now* freezes the most recent N analysed Shorts instead. They are stored by video id in `views/<viewer>.baseline.json`, so analyses that finish later can't shift the baseline. *Reset baseline* goes back to the default.
+- **Score:** take the last `SCROLLSENSE_DRIFT_WINDOW` analysed Shorts after the baseline. For each feature, compute (recent mean − baseline mean) / max(baseline SD, floor), counting only moves in the risky direction, then take the weighted mean. Levels: `learning` until the baseline is full and the window is half full, then `normal`, `watch`, or `warning`. Any A9 Short in the last window is always reported, whatever the level.
+- **Code:** pure core in `scrollsense/drift/core.py` (`DriftDetector.report` returns the `DriftReport` that the UI, and later the nudge and clinician views, consume). Adapters: `baselines.py` and `drift_api.py`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SCROLLSENSE_BASELINE_N` | `20` | Default baseline size, and the default size for "Set baseline now" |
+| `SCROLLSENSE_MIN_BASELINE` | `8` | Fewest baseline Shorts needed to judge |
+| `SCROLLSENSE_DRIFT_WINDOW` | `10` | Recent window (judged once it holds half of this) |
+| `SCROLLSENSE_DRIFT_WATCH` | `1.2` | Score for `watch` (tuned, see `docs/drift-tuning.md`) |
+| `SCROLLSENSE_DRIFT_WARN` | `1.5` | Score for `warning` (placeholder, to be tuned) |
+
+| Method + path | Returns |
+|---|---|
+| `GET /api/viewers/{viewer}/drift` | `{viewer, level, score, note, config, baseline, recent, pending, features, reasons, evidence, safety, timeline}` |
+| `POST /api/viewers/{viewer}/baseline` `{size?}` | 204; freezes the last `size` (default `SCROLLSENSE_BASELINE_N`) analysed Shorts; 409 if fewer than the minimum are analysed |
+| `DELETE /api/viewers/{viewer}/baseline` | 204; back to the default baseline |
+
+To tune thresholds without the UI (read-only; flags override the environment):
+
+```bash
+uv run python -m scrollsense.drift patient-01 --window 8 --baseline-n 15 --watch 1.0 --warn 2.0
+```
+
+It prints the level, score, reasons, a feature table (baseline mean and SD, recent mean, effect, risk), evidence, A9 safety hits, and a text timeline. Other flags: `--min-baseline N`, `--data DIR`.
 
 ## Notes and limits
 

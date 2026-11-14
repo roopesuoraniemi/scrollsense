@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const state = { meta: null, viewer: null, feed: [], clips: [], current: null, follow: true, signature: '', view: initialView() };
+const state = { meta: null, viewer: null, feed: [], clips: [], current: null, follow: true, signature: '', view: initialView(), drift: null, driftKey: '' };
 const POLL_MS = 2000;
 
 const STANCE = {
@@ -42,7 +42,7 @@ async function api(path, options = {}) {
   const headers = { ...(options.headers || {}), ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) };
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
-  return response.json();
+  return response.status === 204 ? null : response.json();
 }
 
 function initialView() {
@@ -82,13 +82,18 @@ async function loadViewers() {
 function changeViewer(viewer) {
   state.viewer = viewer;
   try { localStorage.setItem('scrollsense.viewer', viewer); } catch { /* per-viewer convenience only */ }
-  Object.assign(state, { feed: [], clips: [], current: null, signature: '' });
+  Object.assign(state, { feed: [], clips: [], current: null, signature: '', drift: null, driftKey: '' });
+  renderDrift();
   setFollow(true);
 }
 
 async function tick() {
   if (!state.viewer) return loadViewers();
-  const feed = await api(`/api/viewers/${state.viewer}/feed?limit=100`);
+  const [feed, drift] = await Promise.all([
+    api(`/api/viewers/${state.viewer}/feed?limit=100`),
+    api(`/api/viewers/${state.viewer}/drift`).catch(() => null),
+  ]);
+  updateDrift(drift);
   const signature = feed.map((item) => item.event.event_id + item.state).join('|');
   if (signature === state.signature) return;
   state.signature = signature;
@@ -193,8 +198,10 @@ function renderPackage() {
 
 function renderMap() {
   const layer = state.view === 'aff' ? affectLayer() : semanticLayer();
-  $('map').innerHTML = frame() + layer.axes + dots(layer.points);
-  $('mapnote').innerHTML = `${layer.note}<br>${LEGEND}`;
+  const normal = state.view === 'aff' ? normalOverlay() : '';
+  $('map').innerHTML = frame() + layer.axes + normal + dots(layer.points);
+  const normalNote = normal ? `<br>${NORMAL_LEGEND}` : '';
+  $('mapnote').innerHTML = `${layer.note}<br>${LEGEND}${normalNote}`;
   $('map').querySelectorAll('[data-id]').forEach((g) => { g.onclick = () => select(g.dataset.id); });
 }
 
@@ -290,6 +297,125 @@ function renderToggle() {
   $('tSem').classList.toggle('on', state.view === 'sem');
 }
 
+// ---------------------------------------------------------------- drift from this person's normal
+
+// Same floor the detector puts under the baseline SD of valence and arousal, so the ellipse
+// shows the spread it actually tolerates even when every baseline Short scored alike.
+const AFFECT_SD_FLOOR = 0.5;
+const ELLIPSE_SD = 1.5;
+const LEVEL_COLOUR = { learning: 'var(--mut)', normal: 'var(--ok)', watch: 'var(--amber)', warning: 'var(--danger)' };
+const LEVEL_TITLE = { watch: 'Watch', warning: 'Warning' };
+const NORMAL_LEGEND = `Dashed ellipse: this person's normal feed (baseline centre ± ${ELLIPSE_SD} SD) · arrow: where their recent Shorts moved`;
+
+const hhmm = (seconds) => new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function updateDrift(drift) {
+  const key = JSON.stringify(drift);
+  if (key === state.driftKey) return;
+  state.driftKey = key;
+  state.drift = drift;
+  renderDrift();
+  renderMap();
+}
+
+async function refreshDrift() {
+  if (!state.viewer) return;
+  updateDrift(await api(`/api/viewers/${state.viewer}/drift`));
+}
+
+function renderDrift() {
+  const d = state.drift;
+  $('resetBase').disabled = d?.baseline.source !== 'marked';
+  $('markBase').disabled = !state.viewer;
+  $('drift').innerHTML = d ? driftLine(d) + safetyLine(d) : '';
+  $('drift').querySelectorAll('[data-id]').forEach((b) => { b.onclick = () => select(b.dataset.id); });
+}
+
+function baselineText(b) {
+  if (b.source === 'marked') return `baseline set by hand (${b.n} Shorts up to ${hhmm(b.last_seen_at)})`;
+  return b.n ? `baseline: first ${b.n} Shorts` : 'no baseline yet';
+}
+
+function driftLine(d) {
+  const alarming = d.level === 'watch' || d.level === 'warning';
+  const quietContext = d.level === 'learning' && d.baseline.source === 'default' ? '' : ` · ${esc(baselineText(d.baseline))}`;
+  const body = alarming ? alarmText(d) : `<b>${esc(d.note)}</b>${quietContext}`;
+  const footer = '<span class="note" style="color:inherit;opacity:.8"> Drift from this person\'s normal feed: it describes the content shown, not a diagnosis.</span>';
+  return `<div class="drift ${alarming ? d.level : 'quiet'}"><div class="what">${body}${footer}</div>${sparkline(d)}</div>`;
+}
+
+function alarmText(d) {
+  const since = d.recent.first_seen_at != null ? ` · since ${hhmm(d.recent.first_seen_at)} (${d.recent.n} Shorts)` : '';
+  const reasons = d.reasons.length ? `<div class="why">${d.reasons.map(esc).join(' · ')}</div>` : '';
+  const chips = d.evidence.map((e) => chip(e.video_id, `${e.title} · valence ${e.valence} · load ${e.theme_load}`)).join('');
+  return `<b>${LEVEL_TITLE[d.level]}: ${esc(d.note)}</b>${since} · ${esc(baselineText(d.baseline))}${reasons}<div class="chips">${chips}</div>`;
+}
+
+function chip(id, label) {
+  return `<button type="button" data-id="${esc(id)}" title="${esc(label)}">${esc(label)}</button>`;
+}
+
+function safetyLine(d) {
+  if (!d.safety.length) return '';
+  const chips = d.safety.map((s) => chip(s.video_id, `A9 = ${s.a9} · ${s.title}`)).join('');
+  return `<div class="drift safetyline"><div class="what"><b>Safety path:</b> ${d.safety.length} recent Short${d.safety.length > 1 ? 's' : ''} with death or suicide themes. Shown whatever the drift level: follow the clinician protocol.<div class="chips">${chips}</div></div></div>`;
+}
+
+function sparkline(d) {
+  const points = d.timeline;
+  if (points.length < 2) return '';
+  const W = 200, H = 56, P = 4;
+  const top = Math.max(d.config.warn * 1.3, ...points.map((p) => p.score));
+  const x = (i) => P + i / (points.length - 1) * (W - 2 * P);
+  const y = (v) => H - P - Math.min(v, top) / top * (H - 2 * P);
+  // watch and warn sit close together, so their labels go at opposite ends of the chart
+  const guide = (v, label, end) => `<line x1="${P}" x2="${W - P}" y1="${y(v)}" y2="${y(v)}" stroke="currentColor" stroke-dasharray="3 3" opacity=".5"/><text x="${end ? W - P : P}" y="${y(v) - 2}" text-anchor="${end ? 'end' : 'start'}" style="fill:currentColor;opacity:.7">${label}</text>`;
+  const line = points.map((p, i) => `${x(i).toFixed(1)},${y(p.score).toFixed(1)}`).join(' ');
+  const last = points[points.length - 1];
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Drift score over time"><title>Drift score of the last ${d.config.window} Shorts, at each Short after the baseline</title>${guide(d.config.watch, 'watch', false)}${guide(d.config.warn, 'warn', true)}<polyline points="${line}" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="${x(points.length - 1)}" cy="${y(last.score)}" r="3" fill="${LEVEL_COLOUR[last.level]}"/></svg>`;
+}
+
+function normalOverlay() {
+  const b = state.drift?.baseline;
+  if (!b?.centroid) return '';
+  const cx = affectX(b.centroid.valence), cy = affectY(b.centroid.arousal);
+  const rx = ELLIPSE_SD * Math.max(b.sd.valence, AFFECT_SD_FLOOR) * GEO.PW / 5;
+  const ry = ELLIPSE_SD * Math.max(b.sd.arousal, AFFECT_SD_FLOOR) * GEO.PH / 5;
+  const ellipse = `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="var(--acc)" fill-opacity=".06" stroke="var(--acc)" stroke-dasharray="5 4"><title>This person's normal feed: ${b.n} baseline Shorts</title></ellipse>`;
+  const clip = `<clipPath id="plotclip"><rect x="${GEO.L}" y="${GEO.T}" width="${GEO.PW}" height="${GEO.PH}"/></clipPath>`;
+  const label = `<text x="${cx}" y="${Math.max(cy - ry - 4, GEO.T + 26)}" text-anchor="middle">normal</text>`;
+  return `${clip}<g clip-path="url(#plotclip)">${ellipse}${label}${driftArrow(cx, cy)}</g>`;
+}
+
+function driftArrow(cx, cy) {
+  const r = state.drift.recent;
+  if (!r.centroid) return '';
+  const tx = affectX(r.centroid.valence), ty = affectY(r.centroid.arousal);
+  const colour = LEVEL_COLOUR[state.drift.level];
+  const angle = Math.atan2(ty - cy, tx - cx);
+  const wing = (turn) => `${(tx - 10 * Math.cos(angle + turn)).toFixed(1)},${(ty - 10 * Math.sin(angle + turn)).toFixed(1)}`;
+  const tip = Math.hypot(tx - cx, ty - cy) > 4 ? `<polygon points="${tx},${ty} ${wing(0.45)} ${wing(-0.45)}" fill="${colour}"/>` : '';
+  return `<g><title>Recent ${r.n} Shorts: centre moved from the normal feed</title><line x1="${cx}" y1="${cy}" x2="${tx}" y2="${ty}" stroke="${colour}" stroke-width="2.5" stroke-linecap="round"/>${tip}<circle cx="${cx}" cy="${cy}" r="3" fill="var(--acc)"/></g>`;
+}
+
+async function markBaseline() {
+  if (!state.viewer || !confirm(`Use ${state.viewer}'s most recent analysed Shorts as their normal feed?`)) return;
+  try {
+    await api(`/api/viewers/${state.viewer}/baseline`, { method: 'POST' });
+    setStatus('Baseline set: drift is now measured from the most recent Shorts.');
+    await refreshDrift();
+  } catch (error) { setStatus(error.message, true); }
+}
+
+async function resetBaseline() {
+  if (!state.viewer) return;
+  try {
+    await api(`/api/viewers/${state.viewer}/baseline`, { method: 'DELETE' });
+    setStatus('Baseline reset to the first analysed Shorts.');
+    await refreshDrift();
+  } catch (error) { setStatus(error.message, true); }
+}
+
 // ---------------------------------------------------------------- panel 4: DSM-5 scores
 
 function scoreRow(criterion, value) {
@@ -319,4 +445,6 @@ $('viewer').onchange = (event) => changeViewer(event.target.value);
 $('follow').onchange = (event) => setFollow(event.target.checked);
 $('tAff').onclick = () => setView('aff');
 $('tSem').onclick = () => setView('sem');
+$('markBase').onclick = markBaseline;
+$('resetBase').onclick = resetBaseline;
 init().catch((error) => { console.error(error); setStatus(`Server not reachable: ${error.message}`, true); });

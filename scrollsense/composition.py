@@ -7,9 +7,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .analysis_queue import AnalysisQueue, Pacer
+from .baselines import JsonBaselineStore
+from .drift.core import DriftConfig
 from .gemini import GeminiAnalyser, GeminiConfig
 from .mock import MockAnalyser
-from .ports import AnalysisStore, ContentAnalyser, ViewLog
+from .ports import AnalysisStore, BaselineStore, ContentAnalyser, ViewLog
 from .service import AnalysisService
 from .store import JsonFileStore
 from .viewlog import JsonlViewLog
@@ -31,6 +33,20 @@ class QueueConfig:
 
 
 @dataclass(frozen=True)
+class DataDirs:
+    """Where analyses (`clips`) and view logs plus baseline marks (`views`) live under a data
+    folder. Mock mode uses `mock_`-prefixed folders."""
+
+    clips: Path
+    views: Path
+
+    @classmethod
+    def under(cls, data: Path, mock: bool) -> "DataDirs":
+        prefix = "mock_" if mock else ""
+        return cls(clips=data / f"{prefix}clips", views=data / f"{prefix}views")
+
+
+@dataclass(frozen=True)
 class Settings:
     """`mock` swaps Gemini for placeholder output, stored in its own folders so it can
     never be served as a real analysis or mixed into a real viewer's log.
@@ -44,20 +60,21 @@ class Settings:
     views_dir: Path
     token: str | None
     queue: QueueConfig
+    drift: DriftConfig
 
     @classmethod
     def from_env(cls, root: Path) -> "Settings":
         """Read `root/.env`, then the process environment. `SCROLLSENSE_DATA` moves the data
-        folder (default `root/data`)."""
+        folder (default `root/data`). Raises ValueError on a malformed drift setting."""
         load_dotenv(root / ".env")
         mock = os.getenv("SCROLLSENSE_MOCK") == "1"
         gemini = GeminiConfig(model=os.getenv("GEMINI_MODEL", "gemini-4-hydrogen"),
                               embed_model=os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-2"))
         data = Path(os.getenv("SCROLLSENSE_DATA") or root / "data")
-        prefix = "mock_" if mock else ""
-        return cls(mock=mock, gemini=gemini, data_dir=data / f"{prefix}clips",
-                   views_dir=data / f"{prefix}views", token=os.getenv("SCROLLSENSE_TOKEN") or None,
-                   queue=QueueConfig.from_env())
+        dirs = DataDirs.under(data, mock)
+        return cls(mock=mock, gemini=gemini, data_dir=dirs.clips, views_dir=dirs.views,
+                   token=os.getenv("SCROLLSENSE_TOKEN") or None, queue=QueueConfig.from_env(),
+                   drift=DriftConfig.from_env(os.environ))
 
 
 @dataclass(frozen=True)
@@ -66,6 +83,7 @@ class Wiring:
     store: AnalysisStore
     views: ViewLog
     queue: AnalysisQueue
+    baselines: BaselineStore
 
 
 def wire(settings: Settings) -> Wiring:
@@ -74,7 +92,8 @@ def wire(settings: Settings) -> Wiring:
     store = JsonFileStore(settings.data_dir)
     service = AnalysisService(__analyser(settings), store, time.time)
     queue = AnalysisQueue(service, store, Pacer.per_minute(settings.queue.rpm))
-    return Wiring(service=service, store=store, views=JsonlViewLog(settings.views_dir), queue=queue)
+    return Wiring(service=service, store=store, views=JsonlViewLog(settings.views_dir), queue=queue,
+                  baselines=JsonBaselineStore(settings.views_dir))
 
 
 def __analyser(settings: Settings) -> ContentAnalyser:
