@@ -23,6 +23,9 @@ uv run uvicorn scrollsense.server:app --reload --port 8765
 
 Open `http://localhost:8765/?token=<token>` once for the phone-connected product dashboard, or `http://localhost:8765/demo/?token=<token>` for the single-device web demo (the page remembers the token).
 
+On the product dashboard, **Reset demo** (top right) erases the selected viewer's Shorts and
+check-ins, and with them the check-in cooldown; the phone keeps its settings.
+
 > **Why port 8765:** this Windows machine has a port proxy on 8000 that resets `localhost:8000`.
 > Don't use `--host 0.0.0.0` on shared Wi-Fi.
 
@@ -141,10 +144,11 @@ python -I scripts/build_affect_norms.py --lexicons DIR     # rebuild the norms (
 points are all `warning` (by default the first warning is enough), no card is open and the
 cooldown has passed, the next view receipt carries a card. The userscript sends each view the
 moment a Short opens and, while one is open, an empty batch every 2 s, so the card shows a few
-<<<<<<< HEAD
-seconds after the warning forms (analysis about 2 s, plus up to 2 s): "How do these videos feel right now?" with three equal options: I am okay, I want
-to take a break, Not now. "I want to take a break" pauses the video and closes the tab (or
-switches to a blank page). There is no "refresh my feed" option, because steering the feed
+seconds after the warning forms (analysis about 2 s, plus up to 2 s). The card is the same as in
+the web demo: it slides up from the bottom while the page dims and pauses the video, asking "How do
+these videos feel right now?" with three equal, stacked options: I am okay, I want to take a
+break, Not now. "I am okay" and "Not now" resume the video; "I want to take a break" shows a calm
+"The feed is closed. Enjoy the break." screen that stays until YouTube is reloaded. There is no "refresh my feed" option, because steering the feed
 would erase the signal. The card never names a diagnosis, a mood or a video. Design:
 `docs/patient-nudge-plan.md`.
 

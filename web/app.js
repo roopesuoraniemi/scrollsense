@@ -69,6 +69,19 @@ async function loadViewers() {
   if (!state.viewer) setStatus('No viewers yet. Scroll Shorts on the phone with the userscript.');
 }
 
+// Reset demo: erases the selected viewer's Shorts and check-ins on the server (and with them the
+// check-in cooldown), then starts the page fresh. The phone keeps its settings and simply starts
+// a new history with its next Short.
+async function resetDemo() {
+  if (!state.viewer || !confirm(`Reset the demo for "${state.viewer}"? This erases its Shorts and check-ins.`)) return;
+  const response = await fetch(`/api/viewers/${state.viewer}`, { method: 'DELETE', headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {} });
+  if (!response.ok) throw new Error(response.statusText);
+  changeViewer(state.viewer);
+  $('video').innerHTML = '<div class="empty">Scroll Shorts on the phone to see them here.</div>';
+  $('pkg').innerHTML = '<div class="empty">No Short selected.</div>';
+  setStatus('Demo reset. Scroll Shorts on the phone to start again.');
+}
+
 function changeViewer(viewer) {
   state.viewer = viewer;
   try { localStorage.setItem('scrollsense.viewer', viewer); } catch { /* per-viewer convenience only */ }
@@ -454,6 +467,7 @@ function onTabKey(event) {
 
 $('viewer').onchange = (event) => changeViewer(event.target.value);
 $('live').onclick = () => setFollow(!state.follow);
+$('reset').onclick = () => resetDemo().catch((error) => setStatus(`Reset failed: ${error.message}`, true));
 $('prev').onclick = () => step(-1);
 $('next').onclick = () => step(1);
 document.querySelectorAll('[role="tab"]').forEach((tab) => { tab.onclick = () => selectTab(tab); tab.onkeydown = onTabKey; });
