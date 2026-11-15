@@ -52,6 +52,13 @@ Phone (YouTube Shorts + Violentmonkey)  ──►  POST /api/views (video ID, ti
 2. **Global-norm drift (`scrollsense/drift/`):** Compares the rolling window of analysed Shorts (default `5`, first views only) against a global affect norm (Warriner et al., 2013 mapped to 1–5: `valence 3.03 ± 0.64`, `arousal 2.61 ± 0.45`). Drifting `> 1 SD` into the bottom-left quadrant (low valence + low arousal) triggers a `warning`. See [docs/clinical-calibration.md](docs/clinical-calibration.md).
 3. **Gentle check-in (`scrollsense/nudge.py`):** On a `warning` (default streak `1`), with cooldown (`900 s`) and quiet hours, the next `/api/views` receipt delivers a check-in card. Choosing *"I want to take a break"* pauses the video and closes/blanks the tab. See [docs/patient-nudge-plan.md](docs/patient-nudge-plan.md).
 
+### Gemini API integration
+
+ScrollSense relies on Gemini's native multimodal video capabilities rather than wrapping a text LLM:
+
+- **Direct YouTube URL video understanding:** Using `google-genai`, Gemini watches public Shorts URLs directly with a configurable watch cap (`GEMINI_MAX_WATCH_S=30` via `video_metadata`), reading audio, visuals, pacing, and on-screen text together without downloading videos or running separate ASR/OCR pipelines.
+- **Reasoning-before-score structured output:** Strict Pydantic schemas (`scrollsense/schemas.py`) require Gemini to extract concrete cues and intended meaning before outputting valence and arousal scores, feeding the rolling drift engine in real time (`~2–3 s` per Short with `one_call` on `gemini-3.5-flash-lite`, or `two_stage` with `gemini-4-hydrogen`).
+
 <!-- Media slot: add a screenshot or GIF of the phone check-in card -->
 <!-- ![Phone Nudge Card](docs/assets/nudge-card.png) -->
 
