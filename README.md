@@ -1,32 +1,31 @@
 # ScrollSense
 
 **Your short-form feed knows when you're spiralling before you do.**  
-*Built at Junction 2026 — a passive mood-drift detector and gentle check-in prototype for YouTube Shorts.*
+Built at Junction 2026. A gentle check-in and analytics tool for YouTube Shorts, helping people recovering from depression catch early signs of a setback.
 
 ![ScrollSense Dashboard](docs/assets/scrollsense_dashboard.jpg)
 
-*Note: ScrollSense is a research prototype, not a medical device. Scores describe the **content**, never the person, and are not a diagnosis.*
+*Research prototype, not a medical device. Scores describe the content, not the person, and **are not a diagnosis**.*
 
 ---
 
 ## The problem
 
-Short-form video algorithms are built to maximize watch time, not wellbeing. When a viewer lingers on a few heavy or melancholic clips, the feed quietly adapts — pulling them into a low-mood loop ("doomscrolling" or sadness spirals) that's hard to notice from the inside.
+Short-form content algorithms are predatory: they optimize for watch time, not wellbeing. When you linger on a few heavy or melancholic clips, the feed locks onto that signal and quietly pulls you into a low-mood loop that is hard to notice from the inside.
 
-Current approaches to digital wellbeing don't catch this well:
-- **Screen-time limits** only measure *how long* you scrolled, not *what* the feed was feeding you (30 minutes of comedy is very different from 30 minutes of despair).
-- **Manual mood trackers** add friction and get abandoned.
-- **Account scraping** is invasive and unnecessary.
+Current digital wellbeing tools miss this:
+- Screen-time limits only count minutes, not what the feed is showing you.
+- Manual mood trackers take daily effort and get abandoned.
 
-## Why ScrollSense?
+## Turning the feed into a signal
 
-ScrollSense turns the Shorts you already watch into a **zero-friction, privacy-first affect signal** — and makes the invisible drift visible in real time:
+Instead of fighting the algorithm, **ScrollSense uses it for good**, detecting when content turns depressing, gathering that signal passively, and issuing a gentle nudge when it notices a downward spiral:
 
-- **Zero extra effort:** Just scroll YouTube Shorts normally. A lightweight userscript logs only the public video ID and timestamp the moment a Short opens.
-- **Multimodal AI that gets internet culture:** Naive keyword filters miss irony, meme formats, and upbeat music over bleak captions. Gemini *watches* the Short directly (visuals, audio, text overlays, subtext) and scores its emotional tone — either in a fast **one-call** pass (~2–3 s) or a deeper **two-stage** describe-then-score pipeline.
-- **Privacy by design:** Only public YouTube URLs are sent to Gemini — never your account, comments, or personal data.
-- **Fun to watch in real time:** The live dashboard splits into **Only software sees** (trend sparkline, AI meaning/cues, and an animated 2D **valence × arousal affect map**) and **Clinician sees** (live check-in log).
-- **Respectful nudges, not preachy blockers:** If the feed drifts into low-valence, low-arousal territory, the phone shows a calm check-in card (*"How do these videos feel right now?"*) with three equal choices: *I am okay*, *I want to take a break*, or *Not now*.
+- A small userscript on your phone logs only the public video ID and timestamp when a Short opens, with no personal data or account history collected.
+- Gemini watches the Short and scores its emotional tone from its audio, visuals, and on-screen text.
+- The dashboard separates what the software sees (live affect map and trend) from what a clinician sees (check-in history).
+- When the feed stays in low-valence, low-arousal territory, your phone surfaces a calm check-in card (*"How do these videos feel right now?"*) with three equal choices: *I am okay*, *I want to take a break*, or *Not now*.
+- Healthcare professionals can use the gathered drift trends and check-in history to monitor recovering patients and spot early signs of a setback.
 
 <!-- Media slot: add a side-by-side GIF of scrolling Shorts + the Affect Map moving in real time -->
 <!-- ![Affect Map](docs/assets/affect-map.gif) -->
