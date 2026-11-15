@@ -1,240 +1,172 @@
 # ScrollSense
 
-A research prototype that reads the Shorts a person scrolls as a passive mood signal. A
-userscript on the phone logs each Short; Gemini watches it and scores its affect; the
-laptop page shows when the recent feed drifts towards low mood, and the phone can offer a
-gentle check-in card.
+**Your short-form feed knows when you're spiralling before you do.**  
+*Built at Junction 2026 — a passive mood-drift detector and gentle check-in prototype for YouTube Shorts.*
 
-Scores describe the **content**, never the person, and are not a diagnosis.
+![ScrollSense Dashboard](docs/assets/scrollsense_dashboard.jpg)
 
+*Note: ScrollSense is a research prototype, not a medical device. Scores describe the **content**, never the person, and are not a diagnosis.*
+
+---
+
+## The problem
+
+Short-form video algorithms are built to maximize watch time, not wellbeing. When a viewer lingers on a few heavy or melancholic clips, the feed quietly adapts — pulling them into a low-mood loop ("doomscrolling" or sadness spirals) that's hard to notice from the inside.
+
+Current approaches to digital wellbeing don't catch this well:
+- **Screen-time limits** only measure *how long* you scrolled, not *what* the feed was feeding you (30 minutes of comedy is very different from 30 minutes of despair).
+- **Manual mood trackers** add friction and get abandoned.
+- **Account scraping** is invasive and unnecessary.
+
+## Why ScrollSense?
+
+ScrollSense turns the Shorts you already watch into a **zero-friction, privacy-first affect signal** — and makes the invisible drift visible in real time:
+
+- **Zero extra effort:** Just scroll YouTube Shorts normally. A lightweight userscript logs only the public video ID and timestamp the moment a Short opens.
+- **Multimodal AI that gets internet culture:** Naive keyword filters miss irony, meme formats, and upbeat music over bleak captions. Gemini *watches* the Short directly (visuals, audio, text overlays, subtext) and scores its emotional tone — either in a fast **one-call** pass (~2–3 s) or a deeper **two-stage** describe-then-score pipeline.
+- **Privacy by design:** Only public YouTube URLs are sent to Gemini — never your account, comments, or personal data.
+- **Fun to watch in real time:** The live dashboard splits into **Only software sees** (trend sparkline, AI meaning/cues, and an animated 2D **valence × arousal affect map**) and **Clinician sees** (live check-in log).
+- **Respectful nudges, not preachy blockers:** If the feed drifts into low-valence, low-arousal territory, the phone shows a calm check-in card (*"How do these videos feel right now?"*) with three equal choices: *I am okay*, *I want to take a break*, or *Not now*.
+
+<!-- Media slot: add a side-by-side GIF of scrolling Shorts + the Affect Map moving in real time -->
+<!-- ![Affect Map](docs/assets/affect-map.gif) -->
+
+---
+
+## How it works
+
+```text
+Phone (YouTube Shorts + Violentmonkey)  ──►  POST /api/views (video ID, timestamp)
+  │                                               │
+  │                                               ▼
+  │                                          Paced Queue ──► Gemini (video URL → meaning + affect scores)
+  │                                                               │
+  │                                                               ▼
+  │                                                      Rolling Drift Engine (vs. global affect norm)
+  │                                                               │
+  ◄── Check-in card in receipt (if warning + cooldown) ◄──────────┤
+                                                                  ▼
+                                                    Laptop Dashboard (/ for phone, /demo/ for browser)
 ```
-phone (userscript) ──► POST /api/views ──► queue ──► Gemini, one call: video → short description + affect scores
-laptop page ◄── feed, drift report, nudges          phone ◄── check-in card in the receipt
-```
 
-## Run
+1. **Multimodal Gemini analysis (`scrollsense/gemini.py`, `service.py`):** Watches the Short directly and outputs structured meaning (`transcript`, `on_screen_text`, `emotional_cues`, `intended_meaning`) plus `ClipScores` (`valence` 1–5, `arousal` 1–5, `stance`, `hopeful`). Defaults to the fast `one_call` pipeline (`gemini-3.5-flash-lite`); `GEMINI_PIPELINE=two_stage` runs describe-then-score with `gemini-4-hydrogen`.
+2. **Global-norm drift (`scrollsense/drift/`):** Compares the rolling window of analysed Shorts (default `5`, first views only) against a global affect norm (Warriner et al., 2013 mapped to 1–5: `valence 3.03 ± 0.64`, `arousal 2.61 ± 0.45`). Drifting `> 1 SD` into the bottom-left quadrant (low valence + low arousal) triggers a `warning`. See [docs/clinical-calibration.md](docs/clinical-calibration.md).
+3. **Gentle check-in (`scrollsense/nudge.py`):** On a `warning` (default streak `1`), with cooldown (`900 s`) and quiet hours, the next `/api/views` receipt delivers a check-in card. Choosing *"I want to take a break"* pauses the video and closes/blanks the tab. See [docs/patient-nudge-plan.md](docs/patient-nudge-plan.md).
+
+<!-- Media slot: add a screenshot or GIF of the phone check-in card -->
+<!-- ![Phone Nudge Card](docs/assets/nudge-card.png) -->
+
+---
+
+## Quick start
+
+Requires Python **3.10+**, [`uv`](https://docs.astral.sh/uv/), and a paid-tier `GEMINI_API_KEY` (paid-tier prompts are not used to train Google's models).
 
 ```bash
-cd ~/hackathons/scrollsense
 uv sync
-cp .env.example .env        # then set GEMINI_API_KEY and SCROLLSENSE_TOKEN
+cp .env.example .env        # set GEMINI_API_KEY and SCROLLSENSE_TOKEN
 uv run uvicorn scrollsense.server:app --reload --port 8765
 ```
 
-Open `http://localhost:8765/?token=<token>` once for the phone-connected product dashboard, or `http://localhost:8765/demo/?token=<token>` for the single-device web demo (the page remembers the token).
+Open **`http://localhost:8765/?token=<your-token>`** for the phone-connected product dashboard, or **`http://localhost:8765/demo/?token=<your-token>`** for the single-device browser demo (the page remembers your token).
 
-> **Why port 8765:** this Windows machine has a port proxy on 8000 that resets `localhost:8000`.
-> Don't use `--host 0.0.0.0` on shared Wi-Fi.
+- **No API key? Run in mock mode:**
+  ```bash
+  SCROLLSENSE_MOCK=1 uv run uvicorn scrollsense.server:app --reload --port 8765
+  ```
+- **Connect your phone:** Set `SCROLLSENSE_TOKEN` in `.env`, expose port `8765` over HTTPS with `cloudflared tunnel --url http://127.0.0.1:8765`, open `https://<tunnel>/scrollsense.user.js` in Violentmonkey (e.g. Firefox Android) to install [web/scrollsense.user.js](web/scrollsense.user.js), and enter your tunnel URL, token, and pseudonym when prompted on YouTube Shorts.
+- **Live single-device demo:** Set `SCROLLSENSE_LIVE_INFERENCE=1 SCROLLSENSE_WORKERS=6` to run fresh Gemini analyses on every viewer's first watch at `/demo/`, or deploy to Modal with `scripts/deploy_modal.sh` (`modal_app.py`).
 
-> **Set `SCROLLSENSE_TOKEN` before running `cloudflared tunnel --url http://127.0.0.1:8765`.** The
-> tunnel makes the server public, and every queued Short spends Gemini credits.
-
-- **Without a key:** `SCROLLSENSE_MOCK=1` gives placeholder output, stored in `data/mock_clips/`.
-- **Batch-analyse:** `uv run python -m scrollsense [--force] <url> [<url> ...]` (cached in `data/clips/`).
-- **Tests:** `uv run pytest`
-
-## The demo page (`/demo/`)
-
-`/demo/` is a single-device web demo of the whole loop on one screen (while `/` stays the phone-connected product dashboard with **Only software sees** and **Clinician sees** tabs):
-
-### Run the demo on localhost
+### Useful commands
 
 ```bash
-uv run uvicorn scrollsense.server:app --reload --port 8765
-# or without API calls:
-# SCROLLSENSE_MOCK=1 uv run uvicorn scrollsense.server:app --reload --port 8765
-# or with live Gemini re-analysis on every viewer's first watch:
-# SCROLLSENSE_LIVE_INFERENCE=1 SCROLLSENSE_WORKERS=6 uv run uvicorn scrollsense.server:app --reload --port 8765
+uv run python -m scrollsense [--force] <url> [...]   # batch-analyse Shorts (cached in data/clips/)
+uv run python -m scrollsense.drift test-patient      # print a text drift report
+PYTHONPATH=. uv run python scripts/tune_drift.py     # evaluate drift rules on simulated feeds
+uv run pytest                                        # run the test suite (118 tests)
 ```
 
-Then open **`http://localhost:8765/demo/?token=<token>`** (omit `?token=...` if `SCROLLSENSE_TOKEN` is unset in `.env`).
+---
 
-- **User sees (left):** the phone plays a scripted Shorts feed (`web/demo/demo-feed.json`): upbeat,
-  then a run of low-mood Shorts, then upbeat again. Scroll, swipe or press ↑/↓ to move; tap or
-  Space to pause. Every Short shown is a real view event.
-- **Check-in card:** when the drift passes the 1 SD alarm, a card slides up on the phone, as the
-  patient sees it, with its three options stacked.
-  "I want to take a break" closes the feed; **Continue scrolling** brings it back.
-- **Want to test your own video?** Paste a YouTube Short URL and it plays next. The phone shrinks
-  with the window height so this box stays on screen.
-- **Only software sees (right, first tab):** a compact trend strip on top (drift per analysed
-  Short, the 1 SD alarm line, a dotted mark where each check-in was sent, and a status line with
-  any active check-in cooldown), then the Short's text
-  description and the mood map of the recent Shorts with the low-mood zone (highlighted when a
-  check-in is sent).
-- **Clinician sees (second tab, `#clinician` opens it):** this session's check-ins with the drift
-  that caused each and the answer, in red, then an **example history** (clearly labelled, invented
-  data in `web/demo/app.js`): two weeks of check-ins per day, totals and each check-in with its answer.
-  The tab shows the number of check-ins this session.
-- **Live inference** (`SCROLLSENSE_LIVE_INFERENCE=1`): each viewer's first view of a Short starts
-  a fresh Gemini run (about 2 to 6 s), so results arrive after the video, never ahead of it.
-  Until it is done the text panel says Analyzing; older stored results stay hidden.
-- **Reset demo** (top right) erases the demo viewer and starts over.
+## Technical reference
 
-Each browser gets its own viewer (`demo-xxxxxxxx`, kept in localStorage; `?viewer=demo-name` pins
-one). Share `https://<tunnel>/demo/?token=<token>`. With the scripted feed and window 5 the warning
-and the check-in card show around Short 9, a few seconds after that Short starts.
-
-The only limit on Gemini is the queue's pace: at most `SCROLLSENSE_RPM` analyses start per minute
-(default 20), for all visitors together. When many people scroll at once, Shorts wait their turn
-and the text panel keeps saying Analyzing.
+<details>
+<summary><strong>Environment variables</strong> (<code>.env</code>)</summary>
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SCROLLSENSE_LIVE_INFERENCE` | `0` | `1`: a fresh run on each viewer's first view of a Short |
-| `SCROLLSENSE_RPM` | `20` | Analyses started per minute, at most |
+| `GEMINI_API_KEY` | — | Gemini API key (required unless `SCROLLSENSE_MOCK=1`) |
+| `GEMINI_PIPELINE` | `one_call` | `one_call` (~2–3 s) or `two_stage` (describe-then-score) |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Model (`gemini-4-hydrogen` default for `two_stage`) |
+| `GEMINI_MAX_WATCH_S` | `30` | Seconds watched per Short (`0` = full video) |
+| `SCROLLSENSE_TOKEN` | unset | Bearer token for all `/api/*` routes |
+| `SCROLLSENSE_MOCK` | `0` | `1` uses placeholder analyses in `data/mock_clips/` |
+| `SCROLLSENSE_LIVE_INFERENCE` | `0` | `1` runs fresh Gemini inference per viewer's first watch |
+| `SCROLLSENSE_WORKERS` / `_RPM` | `2` / `20` | Worker concurrency and rate limit (`0` = unpaced) |
+| `SCROLLSENSE_DRIFT_WINDOW` | `5` | Rolling window in analysed Shorts |
+| `SCROLLSENSE_DRIFT_WATCH` / `_WARN` | `1.0` / `1.0` | Bottom-left SD thresholds (`≥ 1.0`) |
+| `SCROLLSENSE_NUDGE_ENABLED` | `1` | `0` disables phone check-in cards |
+| `SCROLLSENSE_NUDGE_STREAK` | `1` | Consecutive `warning` points before nudging |
+| `SCROLLSENSE_NUDGE_COOLDOWN_S` / `_OK_FACTOR` | `900` / `1` | Cooldown in seconds and multiplier after *"I am okay"* |
+| `SCROLLSENSE_NUDGE_EXPIRE_S` | `900` | Unanswered card expiry in seconds |
+| `SCROLLSENSE_NUDGE_QUIET_FROM` / `_TO` | unset | Quiet hours (`0–23`, using `TZ_OFFSET_MIN=120`) |
 
-Set `SCROLLSENSE_WORKERS=6` with live inference so the queue keeps up with scrolling.
+</details>
 
-Rebuild the feed from the analysed clips with `PYTHONPATH=. uv run python scripts/build_demo_feed.py`
-(keeps only embeddable Shorts and leaves out ones about death or self-harm).
+<details>
+<summary><strong>HTTP API</strong> (<code>Authorization: Bearer &lt;token&gt;</code> when token is set)</summary>
 
-## Deploy the demo on Modal
-
-`modal_app.py` runs the same FastAPI app in **one always-warm container** (the queue, its pacer
-and the demo sessions live in memory, and the analysis threads must keep running). Data lives in
-`/tmp`, so a restart starts every session fresh.
-
-```bash
-uv run --with modal modal token new      # once: log in to Modal in the browser
-scripts/deploy_modal.sh serve            # optional: temporary dev URL, Ctrl-C stops it
-scripts/deploy_modal.sh                  # deploy: prints the public URL
-```
-
-The script sends only `GEMINI_API_KEY` from `.env` to a Modal secret named `scrollsense`, pins the
-dependencies from `uv.lock` into `requirements.lock.txt`, and deploys. Demo settings (live
-inference, 6 workers, 20 analyses per minute, window 5) are in `modal_app.py`. The deployed demo
-needs **no token**: share the URL as it is. Anyone can use it, so the only limit on Gemini is the
-20 analyses per minute (and anyone could list or erase demo sessions through the API). The warm container uses Modal credits around
-the clock: stop it after the event with `uv run --with modal modal app stop scrollsense-demo`.
-
-## Drift detection
-
-The last `SCROLLSENSE_DRIFT_WINDOW` analysed Shorts (first view only) are compared with a global
-affect norm. There is no personal baseline, so a feed that is heavy from the first Short is
-flagged too. Levels stay `learning` until the window is half full. Details and evaluation:
-`docs/clinical-calibration.md`.
-
-- **Norm:** Warriner, Kuperman & Brysbaert (2013) word ratings mapped from 1-9 onto 1-5:
-  valence 3.03 ± 0.64, arousal 2.61 ± 0.45 (NRC VAD 2018 as a cross-check).
-- **Rule:** effect per axis = (window mean − norm centre) / norm SD. Within 1 SD is the normal
-  range. A **warning** is a drift that points into the bottom-left quadrant (valence and arousal
-  both at or below the norm) and is longer than 1 SD. The score is that length, 0 in any other
-  direction.
-- **No crisis or suicide alerts:** the feed signal is not reliable enough for that.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `SCROLLSENSE_DRIFT_WINDOW` | `5` | Window in analysed Shorts |
-| `SCROLLSENSE_DRIFT_WATCH` | `1.0` | `watch` above this many SD into the bottom left (≥ 1) |
-| `SCROLLSENSE_DRIFT_WARN` | `1.0` | `warning` above this many SD (≥ 1); above watch brings back a watch band |
-
-```bash
-uv run python -m scrollsense.drift test-patient            # read-only text report
-PYTHONPATH=. uv run python scripts/tune_drift.py           # simulated-feed evaluation
-python -I scripts/build_affect_norms.py --lexicons DIR     # rebuild the norms (lexicons not shipped)
-```
-
-## Patient nudge
-
-**Research prototype, not a medical device.** When the last `SCROLLSENSE_NUDGE_STREAK` judged
-points are all `warning` (by default the first warning is enough), no card is open and the
-cooldown has passed, the next view receipt carries a card. The userscript sends each view the
-moment a Short opens and, while one is open, an empty batch every 2 s, so the card shows a few
-<<<<<<< HEAD
-seconds after the warning forms (analysis about 2 s, plus up to 2 s): "How do these videos feel right now?" with three equal options: I am okay, I want
-to take a break, Not now. "I want to take a break" pauses the video and closes the tab (or
-switches to a blank page). There is no "refresh my feed" option, because steering the feed
-would erase the signal. The card never names a diagnosis, a mood or a video. Design:
-`docs/patient-nudge-plan.md`.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `SCROLLSENSE_NUDGE_ENABLED` | `1` | `0` turns nudges off |
-| `SCROLLSENSE_NUDGE_STREAK` | `1` | Consecutive judged points at `warning` |
-| `SCROLLSENSE_NUDGE_COOLDOWN_S` | `900` | Seconds of cooldown after answering a card (15 min) |
-| `SCROLLSENSE_NUDGE_OK_FACTOR` | `1` | Cooldown multiplier after "I am okay" |
-| `SCROLLSENSE_NUDGE_EXPIRE_S` | `900` | An unanswered card stops showing after this |
-| `SCROLLSENSE_NUDGE_QUIET_FROM` / `_QUIET_TO` | unset | Quiet hours (local hour 0-23) |
-| `SCROLLSENSE_NUDGE_TZ_OFFSET_MIN` | `120` | Local time for quiet hours, minutes east of UTC |
-
-## API
-
-All routes need `Authorization: Bearer <token>` when `SCROLLSENSE_TOKEN` is set.
-
-| Method and path | Returns |
+| Method & Path | Returns |
 |---|---|
 | `GET /api/meta` | `{analyser: {name, mock}, live}` |
-| `GET /api/clips`, `GET /api/clips/{id}` | clip summaries `{id, title, valence, arousal, stance}`; one full analysis |
-| `POST /api/views` `{viewer, events: [{event_id, video_id or url, seen_at, dwell_s?, surface?, ...}]}` | 202 `{accepted, duplicates, queued, rejected, nudge}`; only `surface: "shorts"` is analysed |
+| `GET /api/clips`, `GET /api/clips/{id}` | Clip summaries or one full analysis |
+| `POST /api/views` | `202` `{accepted, duplicates, queued, rejected, nudge}` (only `surface: "shorts"` analysed) |
+| `POST /api/demo/shorts` | `201` `{video_id, state}` (web demo URL paste route) |
 | `GET /api/viewers` | `[{viewer, events, last_seen}]` |
-| `GET /api/viewers/{v}/feed?limit=50` | newest events first, each with `state` and `clip` once scored |
-| `GET /api/viewers/{v}/drift` | `{viewer, level, note, config, affect_baseline, recent, pending, score, features, reasons, evidence, timeline}` |
-| `GET /api/viewers/{v}/nudges` | nudge history, newest first, with each answer and `state` |
-| `POST /api/viewers/{v}/nudges/{id}/response` `{choice}` | 204; 404 unknown, 409 already answered, 422 not an option |
-| `DELETE /api/viewers/{v}` | 204; erases the viewer's views and nudges (GDPR) |
+| `GET /api/viewers/{v}/feed?limit=50` | Newest events with `state` and `clip` |
+| `GET /api/viewers/{v}/drift` | Full drift report (`level`, `score`, `affect_baseline`, `timeline`, etc.) |
+| `GET /api/viewers/{v}/nudges` | Nudge history with answer, `state`, and `cooldown_remaining_s` |
+| `POST /api/viewers/{v}/nudges/{id}/response` | Records `{choice}` (`204`; `404`/`409`/`422` on errors) |
+| `DELETE /api/viewers/{v}` | `204`; erases viewer views and nudges |
 | `GET /api/queue` | `{depth, in_flight, done, failed, recent_failures}` |
-| `POST /api/demo/shorts` `{viewer, url}` | 201 `{video_id, state}`; in cache mode queues the Short (live mode analyses it when viewed); 400 bad input |
 
-Other settings: `SCROLLSENSE_WORKERS` (2), `SCROLLSENSE_RPM` (20 analyses per minute, 0 = unpaced),
-`SCROLLSENSE_DATA` (`data`).
+</details>
 
-### Analysis speed
+<details>
+<summary><strong>Project structure</strong></summary>
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `GEMINI_PIPELINE` | `one_call` | `one_call`: Gemini watches the Short at low resolution and returns a short description and the scores in one call. `two_stage`: a full text package (transcript, visuals, audio), then scoring from the text |
-| `GEMINI_MODEL` | `gemini-3.5-flash-lite` (one_call), `gemini-4-hydrogen` (two_stage) | Overrides the pipeline's model |
-| `GEMINI_THINKING_OFF` | `0` | `1` turns thinking off (one_call); `gemini-3.5-flash-lite` rejects it, `gemini-3.1-flash-lite` accepts it |
-| `GEMINI_MAX_WATCH_S` | `30` | Gemini watches at most the first this many seconds of a video (`0`: all of it), so a long video never stalls the demo |
+```text
+scrollsense/
+├── domain.py, views.py          # Pure values: VideoId, ClipAnalysis, ViewerId, ViewEvent
+├── schemas.py, prompts.py       # Structured-output schemas & prompts (one_call / two_stage)
+├── ports.py                     # Swappable interfaces (ContentAnalyser, AnalysisStore, Logs, Nudger)
+├── gemini.py, mock.py           # Gemini and mock ContentAnalyser implementations
+├── store.py, viewlog.py         # JSON and JSONL storage
+├── service.py, analysis_queue.py, scheduling.py, intake.py  # Pipeline, queue, scheduler, intake
+├── affect_norms.py              # Global affect norm loader (reference/affect_norms.json)
+├── drift/                       # Pure drift math, levels, and text CLI
+├── nudge.py, nudgelog.py, nudge_api.py       # Nudge policy, log, and routes
+├── api.py, views_api.py, drift_api.py, demo_api.py, auth.py  # FastAPI routes and Bearer auth
+└── composition.py, server.py, __main__.py    # Wiring and entry points
 
-Measured on 10 Shorts: `one_call` with `gemini-3.5-flash-lite` takes about 2 s (median; 2.3 s at
-most, up to about 8 s under load) and matched the stored two-stage valence on all 10;
-`gemini-3.1-flash-lite` without thinking is as fast but less perceptive; `two_stage` takes 20-30 s.
-People watch a Short for about 14-16 s on average, so `one_call` results arrive before the swipe.
-With `one_call` the page's **Details** (transcript, on-screen text, visuals, audio) stay empty.
+web/                             # Product dashboard (/), single-device demo (/demo/), phone userscript
+modal_app.py                     # Modal ASGI deployment entrypoint for the web demo
+docs/                            # Calibration notes and design plans
+scripts/                         # Drift tuning, norm-building, demo feed, and Modal deploy scripts
+tests/                           # Unit and API test suite
+```
 
-**Slower models do not score better.** On 41 Shorts covering every valence and arousal level
-(plus the 6 longest), compared with the stored two-stage `gemini-4-hydrogen` analyses:
+</details>
 
-| One call, low resolution | Median | Slowest | Valence exact (MAE) | Arousal exact (MAE) | Low-mood agrees |
-|---|---|---|---|---|---|
-| `gemini-3.5-flash-lite`, 30 s cap (default) | 3.4 s | 5.7 s | 28/41 (0.39) | 18/41 (0.59) | 39/41 |
-| `gemini-3.5-flash-lite`, no cap | 2.7 s | 6.5 s | 30/41 (0.37) | 22/41 (0.46) | 37/41 |
-| `gemini-3.5-flash` | 7.7 s | 11.5 s | 28/41 (0.39) | 18/41 (0.56) | 37/41 |
-| `gemini-3.8-flash` | 8.6 s | 11.7 s | 26/41 (0.41) | 17/41 (0.59) | 36/41 |
-| `gemini-4-hydrogen` | 11.8 s | 20.5 s | 29/41 (0.29) | 21/41 (0.49) | 38/41 |
+---
 
-Differences of a few Shorts are within run-to-run noise; hydrogen's slightly lower valence error
-is the same model as the reference. Arousal is the noisy axis for every model.
+## Limitations
 
-## Structure
+- **YouTube Shorts only:** Gemini reads public YouTube URLs directly (preview feature, up to 8 hours/day); private videos fail and platforms like TikTok are not supported.
+- **Not clinically validated:** The affect norm is derived from English word ratings (Warriner et al., 2013), and thresholds are tuned on simulated feeds rather than clinical trials.
 
-A pure core inside a shell of swappable parts (see `rules/`).
+---
 
-| File | Role |
-|---|---|
-| `scrollsense/schemas.py`, `prompts.py` | Structured-output models (`TextPackage`, `ClipScores`, `QuickAnalysis`) and the prompts |
-| `scrollsense/domain.py`, `views.py` | Pure values: `VideoId`, `ClipAnalysis`, `ViewerId`, `ViewEvent` |
-| `scrollsense/drift/` | Drift against the affect norm: pure core and the text CLI |
-| `scrollsense/affect_norms.py`, `reference/affect_norms.json` | The global affect norm |
-| `scrollsense/nudge.py`, `nudgelog.py`, `nudge_api.py` | Nudge policy and cards, JSONL log, routes |
-| `scrollsense/ports.py` | Interfaces: `ContentAnalyser`, `AnalysisStore`, `ViewLog`, `NudgeLog`, `Nudger` |
-| `scrollsense/gemini.py`, `mock.py` | `ContentAnalyser` implementations (one-call and two-stage Gemini, mock) |
-| `scrollsense/store.py`, `viewlog.py` | JSON and JSONL storage |
-| `scrollsense/service.py`, `analysis_queue.py`, `intake.py` | Describe-then-score pipeline, paced queue, view intake |
-| `scrollsense/scheduling.py` | Cached or live analysis scheduling |
-| `scrollsense/api.py`, `views_api.py`, `drift_api.py`, `demo_api.py`, `auth.py` | HTTP routes and the Bearer guard |
-| `scrollsense/composition.py`, `server.py`, `__main__.py` | Settings and wiring, entry points |
-| `modal_app.py`, `scripts/deploy_modal.sh` | The web demo on Modal |
-| `web/index.html`, `app.js`, `demo-feed.json` | The demo page and its scripted feed (no build step) |
-| `web/scrollsense.user.js` | The phone userscript |
+## License
 
-## Notes and limits
-
-- **YouTube only:** Gemini reads public YouTube URLs directly (preview feature, up to 8 hours of
-  video per day). Private videos fail; TikTok can't be fetched.
-- **Use a paid-tier key:** only public video URLs and their text packages go to Gemini; no
-  patient data does.
-- **Not validated:** the norm is for words, not videos, and the thresholds are checked on
-  simulated feeds only.
+[MIT](LICENSE) — © 2026 Roope Suoraniemi, Milko Roine, Onni Seppänen
